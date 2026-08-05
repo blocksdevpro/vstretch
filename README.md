@@ -14,13 +14,24 @@ Built for the classic loop:
 
 ## Install
 
-Requires [Rust](https://rustup.rs/) on **Windows**.
+**Windows only.** No Rust, no cargo — just the exe.
+
+1. Grab **`vstretch.exe`** from the [latest release](https://github.com/blocksdevpro/vstretch/releases/latest)
+2. Put it somewhere handy (Desktop, `C:\Tools`, etc.)
+3. Double-click to open the TUI, or run it from a terminal
+
+Optional: add that folder to your PATH if you want `vstretch` / `vstretch -a` from anywhere (handy for hotkeys).
+
+<details>
+<summary>Build from source (Rust)</summary>
 
 ```powershell
 cargo install --git https://github.com/blocksdevpro/vstretch.git
 # or from a local clone:
 cargo install --path .
 ```
+
+</details>
 
 ## Usage
 
