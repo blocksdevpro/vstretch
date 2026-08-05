@@ -46,7 +46,7 @@ enum Commands {
 }
 
 fn change_resolution(width: u32, height: u32, refresh: u32) -> Result<()> {
-    let mut devmode = DEVMODEW {
+    let devmode = DEVMODEW {
         dmSize: std::mem::size_of::<DEVMODEW>() as u16,
         dmFields: DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY,
         dmPelsWidth: width,
