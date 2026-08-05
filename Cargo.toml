@@ -1,13 +1,13 @@
 [package]
 name = "vstretch"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
-description = "TUI/CLI to toggle native and stretch display resolutions (built for Valorant)"
+description = "Windows TUI to toggle native ↔ stretch display resolutions for FPS games (Valorant, CS2)"
 license = "MIT"
 repository = "https://github.com/blocksdevpro/vstretch"
 homepage = "https://github.com/blocksdevpro/vstretch"
 readme = "README.md"
-keywords = ["valorant", "resolution", "display", "stretch", "tui"]
+keywords = ["valorant", "cs2", "resolution", "stretch", "tui"]
 categories = ["command-line-utilities"]
 authors = ["blocksdevpro"]
 

@@ -11,12 +11,12 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use config::Config;
 
-/// Valorant native ↔ stretch resolution switcher.
+/// Native ↔ stretch resolution switcher for FPS games (Valorant, CS2, …).
 ///
 /// Run with no flags to open the TUI. Use `--auto` for a quiet hotkey toggle.
 #[derive(Parser)]
 #[command(name = "vstretch")]
-#[command(about = "Native ↔ stretch resolution switcher (TUI)")]
+#[command(about = "Native ↔ stretch resolution switcher for FPS (TUI)")]
 #[command(after_help = "Examples:\n  vstretch          Open the TUI\n  vstretch --auto   Toggle resolution (for hotkeys)")]
 struct Cli {
     /// Toggle native ↔ stretch without opening the TUI (for hotkeys)
