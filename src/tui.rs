@@ -68,7 +68,11 @@ impl App {
                     .iter()
                     .position(|x| x.width == p.width && x.height == p.height)
             })
-            .or_else(|| POPULAR_STRETCH.iter().position(|x| x.name == "1440x1080"))
+            .or_else(|| {
+                POPULAR_STRETCH
+                    .iter()
+                    .position(|x| x.width == 1440 && x.height == 1080)
+            })
             .unwrap_or(0);
         preset_state.select(Some(default_idx));
 
@@ -433,20 +437,35 @@ fn draw_presets(f: &mut Frame, app: &mut App, area: Rect) {
     let items: Vec<ListItem> = POPULAR_STRETCH
         .iter()
         .map(|p| {
+            let is_default = default == Some((p.width, p.height));
             let mut spans = vec![
-                Span::styled(format!("{:12}", p.name), Style::default().fg(Color::White)),
                 Span::styled(
-                    format!("  {:5}  ", p.aspect),
+                    p.resolution_label(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("    {:5}", p.aspect),
                     Style::default().fg(Color::DarkGray),
                 ),
             ];
-            if !p.note.is_empty() {
-                spans.push(Span::styled(p.note, Style::default().fg(Color::DarkGray)));
-            }
-            if default == Some((p.width, p.height)) {
+            // Fixed-width tag column (only one "common", one "popular" in the list)
+            let (tag, tag_color) = match p.tag {
+                Some("popular") => ("popular", Color::Magenta),
+                Some("common") => ("common ", Color::Cyan),
+                _ => ("       ", Color::DarkGray),
+            };
+            spans.push(Span::styled(
+                format!("    {tag}"),
+                Style::default().fg(tag_color),
+            ));
+            if is_default {
                 spans.push(Span::styled(
-                    "  ★ default",
-                    Style::default().fg(Color::Yellow),
+                    "  ★",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             ListItem::new(Line::from(spans))
@@ -456,7 +475,7 @@ fn draw_presets(f: &mut Frame, app: &mut App, area: Rect) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(" popular stretch — Enter to set default ")
+                .title(" Select default stretch resolution ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow)),
         )

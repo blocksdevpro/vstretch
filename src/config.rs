@@ -11,121 +11,100 @@ use serde::{Deserialize, Serialize};
 /// Curated popular stretch resolutions (Valorant / FPS community).
 /// Shared built-in list — not user config.
 pub struct PopularPreset {
-    pub name: &'static str,
     pub width: u32,
     pub height: u32,
     pub aspect: &'static str,
-    pub note: &'static str,
+    /// Only `Some("common")` or `Some("popular")` — keep it minimal.
+    pub tag: Option<&'static str>,
 }
 
-/// Built-in popular stretch resolutions to pick from.
+impl PopularPreset {
+    /// Profile / config key, e.g. `1440x1080`.
+    pub fn name(&self) -> String {
+        format!("{}x{}", self.width, self.height)
+    }
+
+    /// Display line, e.g. `1440 × 1080`.
+    pub fn resolution_label(&self) -> String {
+        format!("{:>4} × {:<4}", self.width, self.height)
+    }
+}
+
+/// Built-in stretch resolutions, ordered high → low (height, then width).
+/// Exactly one `common` and one `popular` tag in the whole list.
 pub const POPULAR_STRETCH: &[PopularPreset] = &[
     PopularPreset {
-        name: "1024x768",
-        width: 1024,
-        height: 768,
-        aspect: "4:3",
-        note: "classic",
-    },
-    PopularPreset {
-        name: "1152x864",
-        width: 1152,
-        height: 864,
-        aspect: "4:3",
-        note: "",
-    },
-    PopularPreset {
-        name: "1280x960",
-        width: 1280,
-        height: 960,
-        aspect: "4:3",
-        note: "common",
-    },
-    PopularPreset {
-        name: "1440x1080",
-        width: 1440,
-        height: 1080,
-        aspect: "4:3",
-        note: "most popular on 1080p",
-    },
-    PopularPreset {
-        name: "1600x1200",
-        width: 1600,
-        height: 1200,
-        aspect: "4:3",
-        note: "",
-    },
-    PopularPreset {
-        name: "1920x1440",
         width: 1920,
         height: 1440,
         aspect: "4:3",
-        note: "on 1440p panels",
+        tag: None,
     },
     PopularPreset {
-        name: "1280x1024",
-        width: 1280,
-        height: 1024,
-        aspect: "5:4",
-        note: "",
-    },
-    PopularPreset {
-        name: "1440x900",
-        width: 1440,
-        height: 900,
-        aspect: "16:10",
-        note: "",
-    },
-    PopularPreset {
-        name: "1680x1050",
-        width: 1680,
-        height: 1050,
-        aspect: "16:10",
-        note: "",
-    },
-    PopularPreset {
-        name: "1728x1080",
-        width: 1728,
-        height: 1080,
-        aspect: "16:10",
-        note: "on 1080p panels",
-    },
-    PopularPreset {
-        name: "1920x1200",
         width: 1920,
         height: 1200,
         aspect: "16:10",
-        note: "",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1600,
+        height: 1200,
+        aspect: "4:3",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1728,
+        height: 1080,
+        aspect: "16:10",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1440,
+        height: 1080,
+        aspect: "4:3",
+        tag: Some("popular"),
+    },
+    PopularPreset {
+        width: 1680,
+        height: 1050,
+        aspect: "16:10",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1280,
+        height: 1024,
+        aspect: "5:4",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1280,
+        height: 960,
+        aspect: "4:3",
+        tag: Some("common"),
+    },
+    PopularPreset {
+        width: 1440,
+        height: 900,
+        aspect: "16:10",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1152,
+        height: 864,
+        aspect: "4:3",
+        tag: None,
+    },
+    PopularPreset {
+        width: 1024,
+        height: 768,
+        aspect: "4:3",
+        tag: None,
     },
 ];
 
 impl PopularPreset {
     pub fn find(query: &str) -> Option<&'static PopularPreset> {
         let q = query.trim().to_lowercase().replace('×', "x");
-        POPULAR_STRETCH.iter().find(|p| {
-            p.name.eq_ignore_ascii_case(&q)
-                || format!("{}x{}", p.width, p.height).eq_ignore_ascii_case(&q)
-        })
-    }
-
-    /// Parse `WIDTHxHEIGHT` (also accepts `×`).
-    pub fn parse_res(s: &str) -> Result<(u32, u32)> {
-        let s = s.trim().to_lowercase().replace('×', "x");
-        let (w, h) = s
-            .split_once('x')
-            .with_context(|| format!("expected WIDTHxHEIGHT, got `{s}`"))?;
-        let width: u32 = w
-            .trim()
-            .parse()
-            .with_context(|| format!("invalid width in `{s}`"))?;
-        let height: u32 = h
-            .trim()
-            .parse()
-            .with_context(|| format!("invalid height in `{s}`"))?;
-        if width == 0 || height == 0 {
-            bail!("resolution must be non-zero");
-        }
-        Ok((width, height))
+        POPULAR_STRETCH.iter().find(|p| p.name().eq_ignore_ascii_case(&q))
     }
 }
 
@@ -165,7 +144,7 @@ impl Default for Config {
         // Seed with a few of the most common presets
         for name in ["1440x1080", "1280x960", "1728x1080"] {
             if let Some(p) = PopularPreset::find(name) {
-                profiles.insert(p.name.to_string(), Profile::new(p.width, p.height));
+                profiles.insert(p.name(), Profile::new(p.width, p.height));
             }
         }
         Self {
@@ -277,36 +256,11 @@ impl Config {
         Ok(name)
     }
 
-    /// Set default to an existing profile name.
-    pub fn set_default_profile(&mut self, name: &str) -> Result<()> {
-        if !self.profiles.contains_key(name) {
-            bail!(
-                "unknown profile `{name}`\navailable: {}",
-                self.profile_names().join(", ")
-            );
-        }
-        self.default_profile = name.to_string();
-        self.save_default_path()?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_res_accepts_x_and_times() {
-        assert_eq!(PopularPreset::parse_res("1440x1080").unwrap(), (1440, 1080));
-        assert_eq!(PopularPreset::parse_res("1440×1080").unwrap(), (1440, 1080));
-        assert_eq!(PopularPreset::parse_res(" 1280X960 ").unwrap(), (1280, 960));
-    }
-
-    #[test]
-    fn parse_res_rejects_garbage() {
-        assert!(PopularPreset::parse_res("nope").is_err());
-        assert!(PopularPreset::parse_res("0x1080").is_err());
-    }
 
     #[test]
     fn find_popular_preset() {

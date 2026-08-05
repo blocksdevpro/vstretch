@@ -1,16 +1,16 @@
 # vstretch
 
-Windows **TUI + CLI** to switch between **native** and **stretch** display resolutions — built for Valorant.
+Windows **TUI** to switch between **native** and **stretch** display resolutions — built for Valorant.
 
 ```text
 ┌─ vstretch ──────────────────────────────────┐
 │  Mode      NATIVE                           │
 │  Current   1920x1080 @ 144Hz                │
 │  Native    1920x1080 @ 144Hz                │
-│  Default   1440x1080  (1440x1080)           │
+│  Default   1440x1080                        │
 ├─────────────────────────────────────────────┤
 │  › Toggle  native ↔ stretch                 │
-│    Apply stretch (default profile)          │
+│    Apply stretch                            │
 │    Apply native                             │
 │    Change default stretch…                  │
 │    Quit                                     │
@@ -29,12 +29,10 @@ cargo install --path .
 
 ## Usage
 
-### Interactive TUI (default)
+### TUI (default)
 
 ```powershell
 vstretch
-# or
-vstretch ui
 ```
 
 | Key | Action |
@@ -43,44 +41,29 @@ vstretch ui
 | `Enter` | Select |
 | `1`–`4` | Quick actions |
 | `r` | Refresh display info |
-| `q` / `Esc` | Quit (or back on preset list) |
+| `q` / `Esc` | Quit (or back) |
 
-### Quiet CLI (for hotkeys)
+Everything lives in the TUI: toggle, native, stretch, and picking a popular default resolution.
 
-One-line output — bind these in PowerToys / AutoHotkey / etc.
+### Hotkey toggle
 
-```powershell
-vstretch auto              # toggle native ↔ stretch
-vstretch stretch           # stretch only
-vstretch native            # native only
-vstretch set-default 1440x1080
-```
-
-### Other
+One quiet command for PowerToys / AutoHotkey / etc.:
 
 ```powershell
-vstretch init              # create config
-vstretch config            # show profiles
-vstretch presets           # list popular stretch res
+vstretch --auto
+# short:
+vstretch -a
 ```
+
+Prints one line, e.g. `1440x1080 @ 180Hz [1440x1080]`.
 
 ## Config
 
+Created automatically on first launch at:
+
 `%APPDATA%\vstretch\config.toml`
 
-```toml
-default_profile = "1440x1080"
-
-[profiles.1440x1080]
-width = 1440
-height = 1080
-```
-
-Change the default in the TUI (**Change default stretch…**) or:
-
-```powershell
-vstretch set-default 1280x960
-```
+Change the default stretch res in the TUI under **Change default stretch…**.
 
 ## Notes
 
