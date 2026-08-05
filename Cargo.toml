@@ -2,12 +2,12 @@
 name = "vstretch"
 version = "0.1.0"
 edition = "2024"
-description = "CLI to toggle native and stretch display resolutions (built for Valorant)"
+description = "TUI/CLI to toggle native and stretch display resolutions (built for Valorant)"
 license = "MIT"
 repository = "https://github.com/blocksdevpro/vstretch"
 homepage = "https://github.com/blocksdevpro/vstretch"
 readme = "README.md"
-keywords = ["valorant", "resolution", "display", "stretch", "cli"]
+keywords = ["valorant", "resolution", "display", "stretch", "tui"]
 categories = ["command-line-utilities"]
 authors = ["blocksdevpro"]
 
@@ -17,11 +17,13 @@ targets = ["x86_64-pc-windows-msvc"]
 
 [dependencies]
 anyhow = "1.0.104"
-clap = { version = "4.6.5", features = ["derive"] }
-dialoguer = "0.12.0"
+crossterm = "0.29.0"
 directories = "6.0.0"
-serde = { version = "1.0.229", features = ["derive"] }
+ratatui = "0.30.2"
 toml = "1.1.4"
+
+clap = { version = "4.6.5", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [

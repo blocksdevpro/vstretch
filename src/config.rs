@@ -100,14 +100,6 @@ pub const POPULAR_STRETCH: &[PopularPreset] = &[
 ];
 
 impl PopularPreset {
-    pub fn label(&self) -> String {
-        if self.note.is_empty() {
-            format!("{}  ({})", self.name, self.aspect)
-        } else {
-            format!("{}  ({}) — {}", self.name, self.aspect, self.note)
-        }
-    }
-
     pub fn find(query: &str) -> Option<&'static PopularPreset> {
         let q = query.trim().to_lowercase().replace('×', "x");
         POPULAR_STRETCH.iter().find(|p| {
