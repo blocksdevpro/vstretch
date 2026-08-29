@@ -17,7 +17,9 @@ use config::Config;
 #[derive(Parser)]
 #[command(name = "vstretch")]
 #[command(about = "Native ↔ stretch resolution switcher for FPS (TUI)")]
-#[command(after_help = "Examples:\n  vstretch          Open the TUI\n  vstretch --auto   Toggle resolution (for hotkeys)")]
+#[command(
+    after_help = "Examples:\n  vstretch          Open the TUI\n  vstretch --auto   Toggle resolution (for hotkeys)"
+)]
 struct Cli {
     /// Toggle native ↔ stretch without opening the TUI (for hotkeys)
     #[arg(short = 'a', long)]
@@ -29,9 +31,14 @@ fn main() -> Result<()> {
 
     if cli.auto {
         let config = Config::load().context("no config yet — run `vstretch` once to set up")?;
-        let (name, profile) = config.get_profile(None)?;
-        let mode = display::toggle_stretch(profile)?;
-        println!("{} [{}]", mode.label(), name);
+        let panel = display::get_native_resolution().ok();
+        let native = display::resolve_native(config.native.as_ref(), panel)?;
+        let mode = display::toggle_stretch(
+            &config.stretch,
+            native,
+            display::stretch_refresh(panel, Some(native)),
+        )?;
+        println!("{} [{}]", mode.label(), config.stretch.name());
         return Ok(());
     }
 

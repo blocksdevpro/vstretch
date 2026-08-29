@@ -45,11 +45,11 @@ vstretch
 |-----|--------|
 | `↑` `↓` / `j` `k` | Move |
 | `Enter` | Select |
-| `1`–`4` | Quick actions |
+| `1`–`5` | Quick actions |
 | `r` | Refresh display info |
 | `q` / `Esc` | Quit (or back) |
 
-Everything lives in the TUI: toggle, native, stretch, and picking a popular default resolution.
+Everything lives in the TUI: toggle, native, stretch, and picking default stretch / native resolutions.
 
 ### Hotkey toggle
 
@@ -69,13 +69,28 @@ Created automatically on first launch at:
 
 `%APPDATA%\vstretch\config.toml`
 
-Change the default stretch res in the TUI under **Change default stretch…**.
+Change the defaults in the TUI under **Change default stretch…** / **Change default native…**.
+
+Native is auto-detected from the panel unless `[native]` is set. Stretch uses panel refresh unless `refresh` is set on `[stretch]`.
+
+```toml
+# vstretch — omit [native] to auto-detect the panel
+
+[stretch]
+width = 1440
+height = 1080
+
+[native]
+width = 2560
+height = 1440
+refresh = 180
+```
 
 ## Notes
 
 - **Windows only** (Win32 display APIs)
 - Changes the **primary** display
-- Native res is detected from the panel (CCD)
+- Native res is detected from the panel (CCD) unless you set an override
 - Still set the same res + stretch scaling in-game / GPU control panel as usual (Valorant, CS2, etc.)
 
 ## License
