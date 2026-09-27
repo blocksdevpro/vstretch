@@ -1,6 +1,6 @@
 [package]
 name = "vstretch"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "Windows TUI to toggle native ↔ stretch display resolutions for FPS games (Valorant, CS2)"
 license = "MIT"

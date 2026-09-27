@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-09-27
+
+### Fixed
+- Detect the primary monitor's panel mode and refresh rate instead of using the first active display
+- Report the requested mode and actual display change error instead of the misleading "operation completed successfully" message
+- Request full-screen scaling when applying stretch so 4:3 resolutions fill a widescreen display
+
 ## [1.1.0] - 2026-08-29
 
 ### Added
@@ -30,5 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vstretch --auto` quiet toggle for hotkeys
 - Popular stretch presets and first-run config under `%APPDATA%\vstretch\config.toml`
 
+[1.1.1]: https://github.com/blocksdevpro/vstretch/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/blocksdevpro/vstretch/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/blocksdevpro/vstretch/releases/tag/v1.0.0
