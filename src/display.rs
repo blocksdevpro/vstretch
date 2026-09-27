@@ -1,17 +1,23 @@
 use std::mem;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use windows::{
     Win32::{
         Devices::Display::{
+            DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_HEADER,
             DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_MODE_INFO_TYPE_TARGET, DISPLAYCONFIG_PATH_INFO,
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME, DisplayConfigGetDeviceInfo,
             GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
         },
-        Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS},
+        Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
         Graphics::Gdi::{
-            CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_SUCCESSFUL,
-            DISPLAYCONFIG_PATH_ACTIVE, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH,
-            ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE, EnumDisplaySettingsW,
+            CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODE_DISPLAY_FIXED_OUTPUT, DEVMODEW,
+            DISP_CHANGE, DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE,
+            DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART,
+            DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW,
+            DISPLAYCONFIG_PATH_ACTIVE, DM_DISPLAYFIXEDOUTPUT, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT,
+            DM_PELSWIDTH, DMDFO_STRETCH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE,
+            EnumDisplayDevicesW, EnumDisplaySettingsW,
         },
     },
     core::Error as WinError,
@@ -72,7 +78,7 @@ pub fn get_current_resolution() -> Result<Mode> {
             refresh: devmode.dmDisplayFrequency,
         })
     } else {
-        Err(WinError::from(unsafe { windows::Win32::Foundation::GetLastError() }).into())
+        bail!("Windows could not read the primary display's current resolution")
     }
 }
 
@@ -117,7 +123,25 @@ pub fn list_display_modes() -> Vec<Mode> {
     modes
 }
 
+fn primary_display_name() -> Result<[u16; 32]> {
+    let mut index = 0;
+    loop {
+        let mut device = DISPLAY_DEVICEW {
+            cb: mem::size_of::<DISPLAY_DEVICEW>() as u32,
+            ..Default::default()
+        };
+        if !unsafe { EnumDisplayDevicesW(None, index, &mut device, 0) }.as_bool() {
+            bail!("Windows did not report a primary display");
+        }
+        if device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE != Default::default() {
+            return Ok(device.DeviceName);
+        }
+        index += 1;
+    }
+}
+
 pub fn get_native_resolution() -> Result<Mode> {
+    let primary_name = primary_display_name()?;
     let mut path_count = 0u32;
     let mut mode_count = 0u32;
 
@@ -152,6 +176,24 @@ pub fn get_native_resolution() -> Result<Mode> {
         if path.flags & DISPLAYCONFIG_PATH_ACTIVE == 0 {
             continue;
         }
+        // CCD path order does not identify the primary display. Match the GDI
+        // source used by EnumDisplaySettingsW/ChangeDisplaySettingsExW(None).
+        let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size: mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+                adapterId: path.sourceInfo.adapterId,
+                id: path.sourceInfo.id,
+            },
+            ..Default::default()
+        };
+        let status = WIN32_ERROR(unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } as u32);
+        if status != ERROR_SUCCESS {
+            return Err(WinError::from(status).into());
+        }
+        if source.viewGdiDeviceName != primary_name {
+            continue;
+        }
         let target_mode_idx = unsafe { path.targetInfo.Anonymous.modeInfoIdx } as usize;
         let Some(mode) = modes.get(target_mode_idx) else {
             continue;
@@ -179,8 +221,8 @@ pub fn get_native_resolution() -> Result<Mode> {
     Err(WinError::from(ERROR_NOT_FOUND).into())
 }
 
-pub fn change_resolution(mode: Mode) -> Result<()> {
-    let devmode = DEVMODEW {
+fn resolution_devmode(mode: Mode, scaling: Option<DEVMODE_DISPLAY_FIXED_OUTPUT>) -> DEVMODEW {
+    let mut devmode = DEVMODEW {
         dmSize: mem::size_of::<DEVMODEW>() as u16,
         dmFields: DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY,
         dmPelsWidth: mode.width,
@@ -188,13 +230,40 @@ pub fn change_resolution(mode: Mode) -> Result<()> {
         dmDisplayFrequency: mode.refresh,
         ..Default::default()
     };
+    if let Some(scaling) = scaling {
+        devmode.dmFields |= DM_DISPLAYFIXEDOUTPUT;
+        devmode.Anonymous1.Anonymous2.dmDisplayFixedOutput = scaling;
+    }
+    devmode
+}
+
+fn check_display_change(result: DISP_CHANGE, mode: Mode) -> Result<()> {
+    let reason = match result {
+        DISP_CHANGE_SUCCESSFUL => return Ok(()),
+        DISP_CHANGE_BADMODE => "resolution or refresh rate is not supported",
+        DISP_CHANGE_FAILED => "display driver rejected the mode",
+        DISP_CHANGE_RESTART => "restart required to apply the mode",
+        DISP_CHANGE_NOTUPDATED => "Windows could not save the display settings",
+        DISP_CHANGE_BADFLAGS => "invalid display change flags",
+        DISP_CHANGE_BADPARAM => "invalid display change parameters",
+        DISP_CHANGE_BADDUALVIEW => "mode is incompatible with DualView",
+        _ => "unknown display change error",
+    };
+    bail!("{}: {reason} (DISP_CHANGE {})", mode.label(), result.0)
+}
+
+pub fn change_resolution(mode: Mode) -> Result<()> {
+    change_resolution_with_scaling(mode, None)
+}
+
+fn change_resolution_with_scaling(
+    mode: Mode,
+    scaling: Option<DEVMODE_DISPLAY_FIXED_OUTPUT>,
+) -> Result<()> {
+    let devmode = resolution_devmode(mode, scaling);
     let result =
         unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, CDS_UPDATEREGISTRY, None) };
-    if result == DISP_CHANGE_SUCCESSFUL {
-        Ok(())
-    } else {
-        Err(WinError::from(unsafe { windows::Win32::Foundation::GetLastError() }).into())
-    }
+    check_display_change(result, mode)
 }
 
 pub fn apply_profile(profile: &Profile, panel_refresh: u32) -> Result<Mode> {
@@ -203,7 +272,8 @@ pub fn apply_profile(profile: &Profile, panel_refresh: u32) -> Result<Mode> {
         height: profile.height,
         refresh: profile.refresh.unwrap_or(panel_refresh),
     };
-    change_resolution(mode)?;
+    // A 4:3 resolution alone can preserve its aspect ratio and leave side bars.
+    change_resolution_with_scaling(mode, Some(DMDFO_STRETCH))?;
     Ok(mode)
 }
 
@@ -301,11 +371,109 @@ mod tests {
     use super::*;
     use crate::config::Profile;
 
+    #[test]
+    #[ignore = "requires a local display supporting 1280x960; does not change display settings"]
+    fn primary_stretch_mode_passes_driver_validation() -> Result<()> {
+        use windows::Win32::Graphics::Gdi::CDS_TEST;
+
+        let current = get_current_resolution()?;
+        let panel = get_native_resolution()?;
+        let stretch = mode(1280, 960, stretch_refresh(Some(panel), Some(current)));
+        println!(
+            "Current: {}; primary panel: {}",
+            current.label(),
+            panel.label()
+        );
+        assert!(list_display_modes().contains(&stretch));
+        let devmode = resolution_devmode(stretch, Some(DMDFO_STRETCH));
+        let result =
+            unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, CDS_TEST, None) };
+        check_display_change(result, stretch)?;
+        assert_eq!(get_current_resolution()?, current);
+        println!("Driver accepts {}", stretch.label());
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "tests 1280x960 and 1440x1080 full-screen scaling, restoring the original mode"]
+    fn primary_stretch_toggle_round_trip() -> Result<()> {
+        let original = get_current_resolution()?;
+        let panel = get_native_resolution()?;
+        let refresh = stretch_refresh(Some(panel), Some(original));
+        let result = (|| -> Result<()> {
+            for profile in [Profile::new(1280, 960), Profile::new(1440, 1080)] {
+                let applied = toggle_stretch(&profile, original, refresh)?;
+                anyhow::ensure!(
+                    applied.matches_profile(&profile),
+                    "toggle did not select stretch"
+                );
+                anyhow::ensure!(
+                    get_current_resolution()? == applied,
+                    "stretch was not applied"
+                );
+                let mut active = empty_devmode();
+                anyhow::ensure!(
+                    unsafe { EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut active) }
+                        .as_bool(),
+                    "could not read active display scaling"
+                );
+                anyhow::ensure!(
+                    unsafe { active.Anonymous1.Anonymous2.dmDisplayFixedOutput } == DMDFO_STRETCH,
+                    "driver did not apply full-screen stretch scaling"
+                );
+                println!("Applied {} with full-screen scaling", applied.label());
+                let restored = toggle_stretch(&profile, original, refresh)?;
+                anyhow::ensure!(restored == original, "toggle did not select native");
+                anyhow::ensure!(
+                    get_current_resolution()? == original,
+                    "native was not restored"
+                );
+                println!("Restored {}", original.label());
+            }
+            Ok(())
+        })();
+        // Restore even if applying or verifying either half of the toggle fails.
+        change_resolution(original).context("restore original display after test")?;
+        result
+    }
+
     fn mode(width: u32, height: u32, refresh: u32) -> Mode {
         Mode {
             width,
             height,
             refresh,
+        }
+    }
+
+    #[test]
+    fn display_change_success_is_not_an_error() {
+        assert!(check_display_change(DISP_CHANGE_SUCCESSFUL, mode(1280, 960, 180)).is_ok());
+    }
+
+    #[test]
+    fn display_change_errors_use_return_code_and_requested_mode() {
+        let requested = mode(1280, 960, 164);
+        let cases = [
+            (DISP_CHANGE_BADMODE, "not supported"),
+            (DISP_CHANGE_FAILED, "driver rejected"),
+            (DISP_CHANGE_RESTART, "restart required"),
+            (DISP_CHANGE_NOTUPDATED, "could not save"),
+            (DISP_CHANGE_BADFLAGS, "invalid display change flags"),
+            (DISP_CHANGE_BADPARAM, "invalid display change parameters"),
+            (DISP_CHANGE_BADDUALVIEW, "DualView"),
+            (DISP_CHANGE(-99), "unknown display change error"),
+        ];
+        for (result, reason) in cases {
+            let message = check_display_change(result, requested)
+                .unwrap_err()
+                .to_string();
+            assert!(message.contains(&requested.label()), "{message}");
+            assert!(message.contains(reason), "{message}");
+            assert!(
+                message.contains(&format!("DISP_CHANGE {}", result.0)),
+                "{message}"
+            );
+            assert!(!message.contains("completed successfully"), "{message}");
         }
     }
 

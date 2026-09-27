@@ -91,7 +91,8 @@ refresh = 180
 - **Windows only** (Win32 display APIs)
 - Changes the **primary** display
 - Native res is detected from the panel (CCD) unless you set an override
-- Still set the same res + stretch scaling in-game / GPU control panel as usual (Valorant, CS2, etc.)
+- Stretch requests full-screen scaling to fill the display
+- Set the same resolution in-game. If a game overrides desktop scaling, select full-screen scaling in the game or GPU control panel
 
 ## License
 
