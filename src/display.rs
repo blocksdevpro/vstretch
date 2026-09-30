@@ -1,3 +1,5 @@
+//! Queries and changes the primary display through the Windows display APIs.
+
 use std::mem;
 
 use anyhow::{Context, Result, bail};
@@ -69,6 +71,7 @@ fn empty_devmode() -> DEVMODEW {
 
 pub fn get_current_resolution() -> Result<Mode> {
     let mut devmode = empty_devmode();
+    // SAFETY: dmSize describes the writable DEVMODEW passed to Windows.
     let result = unsafe { EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut devmode) };
 
     if result.as_bool() {
@@ -90,6 +93,7 @@ pub fn list_display_modes() -> Vec<Mode> {
     let mut i = 0u32;
     loop {
         let mut devmode = empty_devmode();
+        // SAFETY: the buffer is initialized with its size before each query.
         let ok = unsafe { EnumDisplaySettingsW(None, ENUM_DISPLAY_SETTINGS_MODE(i), &mut devmode) };
         if !ok.as_bool() {
             break;
@@ -130,6 +134,7 @@ fn primary_display_name() -> Result<[u16; 32]> {
             cb: mem::size_of::<DISPLAY_DEVICEW>() as u32,
             ..Default::default()
         };
+        // SAFETY: cb describes the writable DISPLAY_DEVICEW buffer.
         if !unsafe { EnumDisplayDevicesW(None, index, &mut device, 0) }.as_bool() {
             bail!("Windows did not report a primary display");
         }
@@ -140,11 +145,13 @@ fn primary_display_name() -> Result<[u16; 32]> {
     }
 }
 
+/// Reads the primary panel's output signal rather than the scaled desktop size.
 pub fn get_native_resolution() -> Result<Mode> {
     let primary_name = primary_display_name()?;
     let mut path_count = 0u32;
     let mut mode_count = 0u32;
 
+    // SAFETY: both count pointers refer to initialized, writable values.
     let status = unsafe {
         GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut path_count, &mut mode_count)
     };
@@ -155,6 +162,8 @@ pub fn get_native_resolution() -> Result<Mode> {
     let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); path_count as usize];
     let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); mode_count as usize];
 
+    // SAFETY: the buffers have the capacities reported by Windows. A topology
+    // change can make the query fail, but Windows stays within those capacities.
     let status = unsafe {
         QueryDisplayConfig(
             QDC_ONLY_ACTIVE_PATHS,
@@ -187,6 +196,8 @@ pub fn get_native_resolution() -> Result<Mode> {
             },
             ..Default::default()
         };
+        // SAFETY: header is the first field of this repr(C) structure, and its
+        // size and type tell Windows to fill a DISPLAYCONFIG_SOURCE_DEVICE_NAME.
         let status = WIN32_ERROR(unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } as u32);
         if status != ERROR_SUCCESS {
             return Err(WinError::from(status).into());
@@ -194,6 +205,7 @@ pub fn get_native_resolution() -> Result<Mode> {
         if source.viewGdiDeviceName != primary_name {
             continue;
         }
+        // SAFETY: without QDC_VIRTUAL_MODE_AWARE, Windows uses modeInfoIdx.
         let target_mode_idx = unsafe { path.targetInfo.Anonymous.modeInfoIdx } as usize;
         let Some(mode) = modes.get(target_mode_idx) else {
             continue;
@@ -202,6 +214,7 @@ pub fn get_native_resolution() -> Result<Mode> {
             continue;
         }
 
+        // SAFETY: infoType was checked before reading the target-mode union.
         let target_mode = unsafe { mode.Anonymous.targetMode };
         let width = target_mode.targetVideoSignalInfo.activeSize.cx;
         let height = target_mode.targetVideoSignalInfo.activeSize.cy;
@@ -261,6 +274,8 @@ fn change_resolution_with_scaling(
     scaling: Option<DEVMODE_DISPLAY_FIXED_OUTPUT>,
 ) -> Result<()> {
     let devmode = resolution_devmode(mode, scaling);
+    // SAFETY: dmSize and dmFields describe the initialized settings, and Windows
+    // borrows the structure only for this call.
     let result =
         unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, CDS_UPDATEREGISTRY, None) };
     check_display_change(result, mode)
@@ -278,16 +293,9 @@ pub fn apply_profile(profile: &Profile, panel_refresh: u32) -> Result<Mode> {
 }
 
 /// Restore target: saved override if set, otherwise the already-detected panel.
-pub fn resolve_native(over: Option<&Profile>, panel: Option<Mode>) -> Result<Mode> {
-    match over {
-        Some(n) => Ok(Mode {
-            width: n.width,
-            height: n.height,
-            refresh: n
-                .refresh
-                .or(panel.map(|p| p.refresh))
-                .unwrap_or(FALLBACK_REFRESH_HZ),
-        }),
+pub fn resolve_native(override_profile: Option<&Profile>, panel: Option<Mode>) -> Result<Mode> {
+    match override_profile {
+        Some(profile) => Ok(native_override_mode(profile, panel)),
         None => panel.context("could not detect panel native resolution"),
     }
 }
@@ -314,31 +322,36 @@ pub fn toggle_stretch(profile: &Profile, native: Mode, panel_refresh: u32) -> Re
 /// The single list row that represents a saved native override.
 pub fn preferred_override_mode(
     modes: &[Mode],
-    over: &Profile,
+    override_profile: &Profile,
     panel: Option<Mode>,
 ) -> Option<Mode> {
-    if over.refresh.is_some() {
-        return modes.iter().copied().find(|m| m.matches_profile(over));
-    }
-    if let Some(p) = panel
-        && let Some(m) = modes
+    if override_profile.refresh.is_some() {
+        return modes
             .iter()
             .copied()
-            .find(|m| m.width == over.width && m.height == over.height && m.refresh == p.refresh)
+            .find(|mode| mode.matches_profile(override_profile));
+    }
+    if let Some(panel) = panel
+        && let Some(mode) = modes
+            .iter()
+            .copied()
+            .find(|mode| mode.matches_profile(override_profile) && mode.refresh == panel.refresh)
     {
-        return Some(m);
+        return Some(mode);
     }
     modes
         .iter()
         .copied()
-        .find(|m| m.width == over.width && m.height == over.height)
+        .filter(|mode| mode.matches_profile(override_profile))
+        .max_by_key(|mode| mode.refresh)
 }
 
-pub fn synthetic_override_mode(over: &Profile, panel: Option<Mode>) -> Mode {
+/// Uses the panel refresh rate when the saved override leaves it unspecified.
+pub fn native_override_mode(override_profile: &Profile, panel: Option<Mode>) -> Mode {
     Mode {
-        width: over.width,
-        height: over.height,
-        refresh: over
+        width: override_profile.width,
+        height: override_profile.height,
+        refresh: override_profile
             .refresh
             .or(panel.map(|p| p.refresh))
             .unwrap_or(FALLBACK_REFRESH_HZ),
@@ -527,7 +540,12 @@ mod tests {
 
     #[test]
     fn preferred_override_falls_back_to_highest_hz() {
-        let modes = [mode(1920, 1080, 144), mode(1920, 1080, 60)];
+        // Driver or saved-mode ordering should not determine the chosen refresh rate.
+        let modes = [
+            mode(1920, 1080, 60),
+            mode(1920, 1080, 144),
+            mode(1920, 1080, 120),
+        ];
         let over = Profile::new(1920, 1080);
         assert_eq!(
             preferred_override_mode(&modes, &over, Some(mode(2560, 1440, 240))),

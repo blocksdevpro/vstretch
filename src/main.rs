@@ -1,7 +1,14 @@
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
+//! Windows tray app with terminal and command-line controls for stretched displays.
+
+mod autostretch;
 mod config;
 mod display;
+mod platform;
+mod startup;
+mod tray;
 mod tui;
 mod update;
 
@@ -14,14 +21,18 @@ use config::Config;
 
 /// Native ↔ stretch resolution switcher for FPS games (Valorant, CS2, …).
 ///
-/// Run with no flags to open the TUI. Use `--auto` for a quiet hotkey toggle.
+/// Run with no flags for the tray menu. Use `--tui` for the terminal interface.
 #[derive(Parser)]
 #[command(name = "vstretch", version)]
-#[command(about = "Native ↔ stretch resolution switcher for FPS (TUI)")]
+#[command(about = "Native ↔ stretch resolution switcher for FPS games")]
 #[command(
-    after_help = "Examples:\n  vstretch          Open the TUI\n  vstretch --auto   Toggle resolution (for hotkeys)"
+    after_help = "Examples:\n  vstretch          Run in the system tray\n  vstretch --tui    Open the terminal interface\n  vstretch --auto   Toggle resolution (for hotkeys)"
 )]
 struct Cli {
+    /// Open the terminal interface instead of the system tray
+    #[arg(long, conflicts_with_all = ["auto", "check_update", "update"])]
+    tui: bool,
+
     /// Toggle native ↔ stretch without opening the TUI (for hotkeys)
     #[arg(short = 'a', long, conflicts_with_all = ["check_update", "update"])]
     auto: bool,
@@ -35,9 +46,31 @@ struct Cli {
     update: bool,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    // A GUI-subsystem executable never flashes a console on double-click.
+    // Attach before parsing so --help, --version, and errors still reach a terminal.
+    let has_arguments = std::env::args_os().len() > 1;
+    if has_arguments {
+        platform::attach_console();
+    }
     let cli = Cli::parse();
+    if cli.tui
+        && let Err(error) = platform::ensure_console()
+    {
+        platform::show_error(&format!("{error:#}"));
+        std::process::exit(1);
+    }
+    if let Err(error) = run(cli) {
+        if has_arguments {
+            eprintln!("vstretch: {error:#}");
+        } else {
+            platform::show_error(&format!("{error:#}"));
+        }
+        std::process::exit(1);
+    }
+}
 
+fn run(cli: Cli) -> Result<()> {
     if cli.check_update || cli.update {
         match update::check()? {
             Some(release) if cli.update => {
@@ -55,7 +88,7 @@ fn main() -> Result<()> {
     }
 
     if cli.auto {
-        let config = Config::load().context("no config yet — run `vstretch` once to set up")?;
+        let config = Config::load().context("load configuration for the display toggle")?;
         let panel = display::get_native_resolution().ok();
         let native = display::resolve_native(config.native.as_ref(), panel)?;
         let mode = display::toggle_stretch(
@@ -67,5 +100,5 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    tui::run()
+    if cli.tui { tui::run() } else { tray::run() }
 }

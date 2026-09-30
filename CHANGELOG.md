@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.2.0] - Unreleased
 
 ### Added
+- System tray launch without a console window, with Native and Stretch modes, presets, and Exit
+- Automatic stretch for Valorant and CS2, keeping stretch active across Alt+Tab and restoring the previous desktop when the game exits
+- Opt-in Restore desktop on Alt+Tab setting, disabled by default for new and existing configs
+- Opt-in Start with Windows through a per-user startup entry
+- `--tui` to open the existing terminal interface
+- Tray runtime verification script using isolated configuration
 - Background update checks at TUI startup, with an update banner and confirmation prompt
 - Download and install newer stable releases from the TUI with `u`, verifying SHA-256 before replacing the executable
 - `--version`, `--check-update`, and `--update` commands

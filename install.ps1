@@ -95,7 +95,7 @@ try {
     }
     Write-Host "Installed vstretch $($release.tag_name) to $destination"
     if (-not $NoPath) {
-        Write-Host 'Run vstretch in PowerShell. Open a new terminal if needed.'
+        Write-Host 'Double-click the executable or run vstretch to open its system tray menu.'
     }
 } finally {
     if (Test-Path -LiteralPath $staged) {
