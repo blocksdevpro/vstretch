@@ -1,3 +1,5 @@
+//! Checks stable GitHub releases and verifies downloads before replacing the app.
+
 use std::{
     fs,
     io::{Read, Write},
@@ -15,6 +17,7 @@ const RELEASE_API: &str = "https://api.github.com/repos/blocksdevpro/vstretch/re
 const DOWNLOAD_PREFIX: &str = "https://github.com/blocksdevpro/vstretch/releases/download/";
 const MAX_BINARY_SIZE: u64 = 64 * 1024 * 1024;
 
+/// A newer stable release whose download URL, size, and digest passed validation.
 #[derive(Clone, Debug)]
 pub struct Release {
     pub version: Version,
@@ -111,6 +114,7 @@ pub fn install(release: &Release) -> Result<()> {
         .error_for_status()
         .context("update download failed")?;
     let mut bytes = Vec::new();
+    // Read one extra byte to detect a response larger than the declared asset.
     response
         .take(release.size + 1)
         .read_to_end(&mut bytes)

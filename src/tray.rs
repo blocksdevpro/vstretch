@@ -1,0 +1,762 @@
+//! Runs menu commands and automatic display polling on one Windows UI thread.
+
+mod theme;
+
+use anyhow::{Context, Result, bail};
+use tray_icon::{
+    Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu},
+};
+use windows::{
+    Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, KillTimer, MSG, SetTimer, TranslateMessage, WM_TIMER,
+    },
+    core::Error as WinError,
+};
+
+use crate::{
+    autostretch::{Action, AutoPolicy, AutoStretch, GameActivity},
+    config::{Config, POPULAR_STRETCH, Profile},
+    display::{self, Mode, ModeKind},
+    platform, startup,
+};
+
+enum Command {
+    Native,
+    Stretch,
+    Preset(Profile),
+    AutoStretch,
+    RestoreOnAltTab,
+    Startup,
+    Exit,
+}
+
+struct TrayMenu {
+    root: Menu,
+    status: MenuItem,
+    native: CheckMenuItem,
+    stretch: CheckMenuItem,
+    presets: Vec<(Profile, CheckMenuItem)>,
+    auto: CheckMenuItem,
+    restore_on_alt_tab: CheckMenuItem,
+    startup: CheckMenuItem,
+    exit: MenuItem,
+}
+
+impl TrayMenu {
+    fn new(config: &Config) -> Result<Self> {
+        let root = Menu::new();
+        let status = MenuItem::new("Vstretch", false, None);
+        let mode_menu = Submenu::new("Mode", true);
+        let native = CheckMenuItem::new("Native", true, false, None);
+        let stretch = CheckMenuItem::new("Stretch", true, false, None);
+        mode_menu.append_items(&[&native, &stretch])?;
+        let presets_menu = Submenu::new("Presets", true);
+        let mut presets = Vec::new();
+        for preset in POPULAR_STRETCH {
+            let profile = Profile::new(preset.width, preset.height);
+            let item = CheckMenuItem::new(
+                format!("{} x {}   {}", preset.width, preset.height, preset.aspect),
+                true,
+                false,
+                None,
+            );
+            presets_menu.append(&item)?;
+            presets.push((profile, item));
+        }
+        if !presets
+            .iter()
+            .any(|(p, _)| p.width == config.stretch.width && p.height == config.stretch.height)
+        {
+            let profile = config.stretch.clone();
+            let item = CheckMenuItem::new(format!("{}   Saved", profile.name()), true, false, None);
+            presets_menu.append(&item)?;
+            presets.push((profile, item));
+        }
+        let auto = CheckMenuItem::new(
+            "Auto-stretch Valorant && CS2",
+            true,
+            config.auto_stretch,
+            None,
+        );
+        let restore_on_alt_tab = CheckMenuItem::new(
+            "Restore desktop on Alt+Tab",
+            true,
+            config.restore_on_alt_tab,
+            None,
+        );
+        let startup = CheckMenuItem::new("Start with Windows", true, false, None);
+        let exit = MenuItem::new("Exit", true, None);
+        root.append_items(&[
+            &status,
+            &PredefinedMenuItem::separator(),
+            &mode_menu,
+            &presets_menu,
+            &PredefinedMenuItem::separator(),
+            &auto,
+            &restore_on_alt_tab,
+            &startup,
+            &PredefinedMenuItem::separator(),
+            &exit,
+        ])?;
+        Ok(Self {
+            root,
+            status,
+            native,
+            stretch,
+            presets,
+            auto,
+            restore_on_alt_tab,
+            startup,
+            exit,
+        })
+    }
+
+    fn command(&self, id: &MenuId) -> Option<Command> {
+        if id == self.native.id() {
+            Some(Command::Native)
+        } else if id == self.stretch.id() {
+            Some(Command::Stretch)
+        } else if id == self.auto.id() {
+            Some(Command::AutoStretch)
+        } else if id == self.restore_on_alt_tab.id() {
+            Some(Command::RestoreOnAltTab)
+        } else if id == self.startup.id() {
+            Some(Command::Startup)
+        } else if id == self.exit.id() {
+            Some(Command::Exit)
+        } else {
+            self.presets
+                .iter()
+                .find(|(_, item)| id == item.id())
+                .map(|(profile, _)| Command::Preset(profile.clone()))
+        }
+    }
+
+    fn sync(
+        &self,
+        config: &Config,
+        current: Option<Mode>,
+        panel: Option<Mode>,
+        native: Option<Mode>,
+    ) {
+        let kind = display::classify_mode(current, native, panel, Some(&config.stretch));
+        self.native.set_text(
+            native
+                .map(|n| format!("Native ({} x {})", n.width, n.height))
+                .unwrap_or_else(|| "Native (unavailable)".into()),
+        );
+        self.native.set_enabled(native.is_some());
+        self.native.set_checked(kind == ModeKind::Native);
+        self.stretch.set_text(format!(
+            "Stretch ({} x {})",
+            config.stretch.width, config.stretch.height
+        ));
+        // Automatic sessions and manual stretch both need a known restore target.
+        self.stretch.set_enabled(native.is_some());
+        self.stretch.set_checked(kind == ModeKind::Stretch);
+        for (profile, item) in &self.presets {
+            item.set_checked(
+                profile.width == config.stretch.width && profile.height == config.stretch.height,
+            );
+        }
+        self.auto.set_checked(config.auto_stretch);
+        self.restore_on_alt_tab
+            .set_checked(config.restore_on_alt_tab);
+    }
+}
+
+struct App {
+    config: Config,
+    menu: TrayMenu,
+    icon: TrayIcon,
+    auto: AutoStretch,
+    current: Option<Mode>,
+    panel: Option<Mode>,
+    native: Option<Mode>,
+    activity: GameActivity,
+    error: Option<String>,
+}
+
+impl App {
+    fn new() -> Result<Self> {
+        let config = Config::load_or_init()?;
+        let menu = TrayMenu::new(&config)?;
+        let icon = TrayIconBuilder::new()
+            .with_icon(tray_icon()?)
+            .with_tooltip("Vstretch | Right-click for display modes")
+            .with_menu(Box::new(menu.root.clone()))
+            .with_menu_on_left_click(true)
+            .build()
+            .context("could not create the system tray icon")?;
+        theme::follow_system_theme(&icon)?;
+        let mut app = Self {
+            config,
+            menu,
+            icon,
+            auto: AutoStretch::default(),
+            current: None,
+            panel: None,
+            native: None,
+            activity: GameActivity::Stopped,
+            error: None,
+        };
+        app.refresh_display();
+        app.refresh_startup();
+        app.sync_menu();
+        Ok(app)
+    }
+
+    fn refresh_display(&mut self) {
+        self.current = display::get_current_resolution().ok();
+        self.panel = display::get_native_resolution().ok();
+        self.native = display::resolve_native(self.config.native.as_ref(), self.panel).ok();
+    }
+
+    fn refresh_startup(&mut self) {
+        match startup::enabled() {
+            Ok(enabled) => {
+                self.menu.startup.set_enabled(true);
+                self.menu.startup.set_checked(enabled);
+            }
+            Err(error) => {
+                self.menu.startup.set_checked(false);
+                self.menu.startup.set_enabled(false);
+                self.error = Some(format!("Startup settings: {error:#}"));
+            }
+        }
+    }
+
+    fn sync_menu(&mut self) {
+        self.menu
+            .sync(&self.config, self.current, self.panel, self.native);
+        let status = self.error.clone().unwrap_or_else(|| {
+            self.current
+                .map(|mode| format!("Current: {}", mode.label()))
+                .unwrap_or_else(|| "Current display unavailable".into())
+        });
+        self.menu.status.set_text(
+            status
+                .chars()
+                .take(110)
+                .collect::<String>()
+                .replace('&', "&&"),
+        );
+        let _ = self.icon.set_tooltip(Some(format!(
+            "Vstretch | {}",
+            status.chars().take(100).collect::<String>()
+        )));
+    }
+
+    fn tick(&mut self) {
+        // --tui may have saved a preset or native override while the tray runs.
+        // Invalid external edits leave the last valid config in use and visible.
+        match Config::load() {
+            Ok(config) => self.config = config,
+            Err(error) => self.error = Some(format!("Config: {error:#}")),
+        }
+        self.refresh_display();
+        if let Some(activity) = platform::game_activity() {
+            self.activity = activity;
+            self.run_auto();
+        } else if !self.config.auto_stretch {
+            self.run_auto();
+        }
+        self.refresh_startup();
+        self.sync_menu();
+    }
+
+    fn run_auto(&mut self) {
+        let Some(current) = self.current else { return };
+        let policy = AutoPolicy {
+            enabled: self.config.auto_stretch,
+            restore_on_alt_tab: self.config.restore_on_alt_tab,
+        };
+        let Some(action) = self.auto.observe(policy, self.activity, current) else {
+            return;
+        };
+        let result = match action {
+            Action::Stretch { desktop } => {
+                if self.native.is_none() {
+                    self.error = Some("Auto-stretch paused: native resolution unavailable".into());
+                    return;
+                }
+                display::apply_profile(
+                    &self.config.stretch,
+                    display::stretch_refresh(self.panel, self.native),
+                )
+                .map(|applied| self.auto.applied(desktop, applied))
+            }
+            Action::Restore { desktop } => display::change_resolution(desktop)
+                .map(|()| self.auto.restored(policy, self.activity)),
+        };
+        match result {
+            Ok(()) => self.error = None,
+            Err(error) => self.error = Some(format!("Auto-stretch: {error:#}")),
+        }
+        self.refresh_display();
+    }
+
+    fn handle(&mut self, command: Command) -> Result<bool> {
+        self.error = None;
+        self.refresh_display();
+        match command {
+            Command::Native => {
+                let native = self.native.context("could not detect native resolution")?;
+                display::change_resolution(native)?;
+                self.auto.manual_choice();
+            }
+            Command::Stretch => {
+                self.native.context("could not detect native resolution")?;
+                display::apply_profile(
+                    &self.config.stretch,
+                    display::stretch_refresh(self.panel, self.native),
+                )?;
+                self.auto.manual_choice();
+            }
+            Command::Preset(profile) => {
+                let was_stretch = display::classify_mode(
+                    self.current,
+                    self.native,
+                    self.panel,
+                    Some(&self.config.stretch),
+                ) == ModeKind::Stretch;
+                let mut next = self.config.clone();
+                next.stretch = profile;
+                next.save_default_path()?;
+                self.config = next;
+                if was_stretch {
+                    display::apply_profile(
+                        &self.config.stretch,
+                        display::stretch_refresh(self.panel, self.native),
+                    )?;
+                    self.auto.manual_choice();
+                }
+            }
+            Command::AutoStretch => {
+                let mut next = self.config.clone();
+                next.auto_stretch = !next.auto_stretch;
+                next.save_default_path()?;
+                self.config = next;
+                if self.config.auto_stretch
+                    && matches!(self.auto, AutoStretch::PausedUntilSessionEnds)
+                {
+                    self.auto = AutoStretch::Ready;
+                }
+                self.run_auto();
+            }
+            Command::RestoreOnAltTab => {
+                let mut next = self.config.clone();
+                next.restore_on_alt_tab = !next.restore_on_alt_tab;
+                next.save_default_path()?;
+                self.config = next;
+                self.run_auto();
+            }
+            Command::Startup => startup::set_enabled(!startup::enabled()?)?,
+            Command::Exit => {
+                self.restore_on_exit()?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn restore_on_exit(&mut self) -> Result<()> {
+        if let Some(desktop) = display::get_current_resolution()
+            .ok()
+            .and_then(|current| self.auto.restore_on_exit(current))
+        {
+            display::change_resolution(desktop)
+                .context("could not restore the desktop; select Native before exiting")?;
+            self.auto = AutoStretch::Ready;
+        }
+        Ok(())
+    }
+}
+
+struct Timer(usize);
+
+impl Timer {
+    fn new() -> Result<Self> {
+        // A thread timer keeps all display changes on the menu's UI thread.
+        let id = unsafe { SetTimer(None, 0, 750, None) };
+        if id == 0 {
+            return Err(WinError::from_thread().into());
+        }
+        Ok(Self(id))
+    }
+}
+
+impl Drop for Timer {
+    fn drop(&mut self) {
+        let _ = unsafe { KillTimer(None, self.0) };
+    }
+}
+
+pub fn run() -> Result<()> {
+    let Some(_instance) = platform::tray_instance(&Config::config_path()?)? else {
+        return Ok(());
+    };
+    let mut app = App::new()?;
+    let timer = Timer::new()?;
+    let mut message = MSG::default();
+    loop {
+        // tray-icon/muda own the hidden window. Its Windows messages and the
+        // foreground poll run on this one thread; no worker shares display state.
+        // SAFETY: message is writable for the entire call. The window filter is null.
+        let result = unsafe { GetMessageW(&mut message, None, 0, 0) };
+        if result.0 == -1 {
+            app.restore_on_exit()?;
+            bail!(
+                "system tray message loop failed: {}",
+                WinError::from_thread()
+            );
+        }
+        if result.0 == 0 {
+            break;
+        }
+        // SAFETY: GetMessageW returned a message for this thread; both functions
+        // borrow it only for the duration of these calls.
+        unsafe {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if let Some(command) = app.menu.command(event.id()) {
+                match app.handle(command) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(error) => {
+                        app.error = Some(format!("{error:#}"));
+                        platform::show_error(&format!("{error:#}"));
+                    }
+                }
+                app.refresh_display();
+                app.refresh_startup();
+                app.sync_menu();
+            }
+        }
+        // Mouse move/click events aren't needed, but drain the default channel.
+        while TrayIconEvent::receiver().try_recv().is_ok() {}
+        if message.message == WM_TIMER && message.hwnd.is_invalid() && message.wParam.0 == timer.0 {
+            app.tick();
+        }
+    }
+    app.restore_on_exit()
+}
+
+/// Small vector-like V drawn directly into pixels. No external image is needed
+/// at runtime, so the downloaded executable stays portable.
+fn tray_icon() -> Result<Icon> {
+    const SIZE: u32 = 32;
+    let mut pixels = vec![0; (SIZE * SIZE * 4) as usize];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let index = ((y * SIZE + x) * 4) as usize;
+            if (2..30).contains(&x) && (2..30).contains(&y) {
+                pixels[index..index + 4].copy_from_slice(&[22, 28, 42, 255]);
+                let arm = 7 + (y.saturating_sub(7) / 2);
+                if (7..25).contains(&y) && (x.abs_diff(arm) <= 2 || x.abs_diff(31 - arm) <= 2) {
+                    pixels[index..index + 4].copy_from_slice(&[71, 222, 203, 255]);
+                }
+            }
+        }
+    }
+    Icon::from_rgba(pixels, SIZE, SIZE).context("could not create tray icon image")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "temporarily switches the real primary display; requires isolated VSTRETCH_CONFIG and restores the original mode"]
+    fn automatic_session_applies_and_restores_display() -> Result<()> {
+        anyhow::ensure!(
+            std::env::var_os("VSTRETCH_CONFIG").is_some(),
+            "set an isolated VSTRETCH_CONFIG before running"
+        );
+        struct RestoreDisplay(Mode);
+        impl Drop for RestoreDisplay {
+            fn drop(&mut self) {
+                let _ = display::change_resolution(self.0);
+            }
+        }
+        let original = display::get_current_resolution()?;
+        let _restore = RestoreDisplay(original);
+        let config = Config {
+            stretch: Profile::new(1280, 960),
+            native: Some(Profile {
+                width: original.width,
+                height: original.height,
+                refresh: Some(original.refresh),
+            }),
+            ..Config::default()
+        };
+        config.save_default_path()?;
+        let mut app = App::new()?;
+        app.activity = GameActivity::Focused;
+        app.run_auto();
+        anyhow::ensure!(
+            app.error.is_none(),
+            "automatic apply failed: {:?}",
+            app.error
+        );
+        anyhow::ensure!(
+            display::get_current_resolution()?.matches_profile(&config.stretch),
+            "automatic stretch did not reach the primary display"
+        );
+        let applied = display::get_current_resolution()?;
+        app.activity = GameActivity::Background;
+        app.run_auto();
+        anyhow::ensure!(
+            display::get_current_resolution()? == applied,
+            "default Alt+Tab changed the resolution"
+        );
+        app.activity = GameActivity::Focused;
+        app.run_auto();
+        anyhow::ensure!(
+            display::get_current_resolution()? == applied,
+            "default return from Alt+Tab changed the resolution"
+        );
+        app.activity = GameActivity::Stopped;
+        app.run_auto();
+        anyhow::ensure!(
+            display::get_current_resolution()? == original,
+            "game exit did not restore the desktop"
+        );
+
+        app.handle(Command::RestoreOnAltTab)?;
+        anyhow::ensure!(
+            Config::load()?.restore_on_alt_tab,
+            "Alt+Tab opt-in did not persist"
+        );
+        app.activity = GameActivity::Focused;
+        app.run_auto();
+        app.activity = GameActivity::Background;
+        app.run_auto();
+        anyhow::ensure!(
+            display::get_current_resolution()? == original,
+            "opted-in Alt+Tab did not restore the desktop"
+        );
+        app.handle(Command::RestoreOnAltTab)?;
+        anyhow::ensure!(
+            !Config::load()?.restore_on_alt_tab,
+            "Alt+Tab opt-out did not persist"
+        );
+
+        app.activity = GameActivity::Focused;
+        app.run_auto();
+        anyhow::ensure!(
+            app.error.is_none(),
+            "second automatic apply failed: {:?}",
+            app.error
+        );
+        app.handle(Command::AutoStretch)?;
+        anyhow::ensure!(
+            !Config::load()?.auto_stretch,
+            "automatic toggle did not persist"
+        );
+        anyhow::ensure!(
+            display::get_current_resolution()? == original,
+            "disabling automatic mode did not restore the desktop"
+        );
+
+        app.handle(Command::AutoStretch)?;
+        anyhow::ensure!(
+            display::get_current_resolution()?.matches_profile(&config.stretch),
+            "reenabling automatic mode did not apply stretch"
+        );
+        anyhow::ensure!(
+            app.handle(Command::Exit)?,
+            "Exit did not finish the automatic session"
+        );
+        anyhow::ensure!(
+            display::get_current_resolution()? == original,
+            "Exit did not restore the desktop"
+        );
+        // The player may already be using 1440x1080. Pick a different size so
+        // this check exercises a real manual switch and keeps native unambiguous.
+        let manual_profile = if original.width == 1440 && original.height == 1080 {
+            Profile::new(1280, 960)
+        } else {
+            Profile::new(1440, 1080)
+        };
+        app.handle(Command::Preset(manual_profile))?;
+        app.handle(Command::Stretch)?;
+        app.refresh_display();
+        app.sync_menu();
+        let manual_current = display::get_current_resolution()?;
+        anyhow::ensure!(
+            manual_current.matches_profile(&app.config.stretch)
+                && app.menu.stretch.is_checked()
+                && !app.menu.native.is_checked(),
+            "manual stretch did not reach the display and menu: current={manual_current:?}, restore={original:?}, native={:?}, stretch_checked={}, native_checked={}",
+            app.native,
+            app.menu.stretch.is_checked(),
+            app.menu.native.is_checked()
+        );
+        app.handle(Command::Native)?;
+        app.refresh_display();
+        app.sync_menu();
+        anyhow::ensure!(
+            display::get_current_resolution()? == original && app.menu.native.is_checked(),
+            "manual Native did not restore the display and menu"
+        );
+        println!(
+            "Default Alt+Tab kept the display unchanged; game exit restored it. Opted-in Alt+Tab restored it. Disabling auto-stretch, Exit, and manual Native also restored the display."
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires the Windows shell and an isolated VSTRETCH_CONFIG; does not change display settings"]
+    fn native_menu_events_save_config_and_update_checks() -> Result<()> {
+        use tray_icon::menu::ContextMenu;
+        use windows::Win32::{
+            Foundation::{HWND, WPARAM},
+            UI::WindowsAndMessaging::{GetMenuItemID, GetSubMenu, HMENU, SendMessageW, WM_COMMAND},
+        };
+        anyhow::ensure!(
+            std::env::var_os("VSTRETCH_CONFIG").is_some(),
+            "run through scripts/test-tray.ps1 to isolate configuration"
+        );
+        let initial = Config::load_or_init()?;
+        anyhow::ensure!(
+            initial.auto_stretch,
+            "first-run config did not enable auto-stretch"
+        );
+        anyhow::ensure!(
+            !initial.restore_on_alt_tab,
+            "first-run config enabled Alt+Tab restoration"
+        );
+        let original = display::get_current_resolution()?;
+        // A native override equal to the active desktop makes preset selection
+        // a save-only operation even if the test machine is already stretched.
+        let config = Config {
+            native: Some(Profile {
+                width: original.width,
+                height: original.height,
+                refresh: Some(original.refresh),
+            }),
+            ..Config::default()
+        };
+        config.save_default_path()?;
+        let mut app = App::new()?;
+        anyhow::ensure!(
+            app.icon.rect().is_some(),
+            "Windows shell did not register the tray icon"
+        );
+        let hwnd = HWND(app.icon.window_handle());
+        let root = HMENU(app.menu.root.hpopupmenu() as _);
+        anyhow::ensure!(
+            !app.menu.restore_on_alt_tab.is_checked(),
+            "Alt+Tab checkbox was checked by default"
+        );
+        let auto_id = unsafe { GetMenuItemID(root, 5) };
+        unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(auto_id as usize)), None) };
+        let event = MenuEvent::receiver()
+            .try_recv()
+            .context("no native auto-stretch menu event")?;
+        anyhow::ensure!(
+            event.id() == app.menu.auto.id(),
+            "wrong auto-stretch menu event"
+        );
+        app.handle(app.menu.command(event.id()).context("unknown menu event")?)?;
+        app.sync_menu();
+        anyhow::ensure!(
+            !Config::load()?.auto_stretch && !app.menu.auto.is_checked(),
+            "auto-stretch preference did not reach config and menu"
+        );
+
+        let alt_tab_id = unsafe { GetMenuItemID(root, 6) };
+        for expected in [true, false] {
+            unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(alt_tab_id as usize)), None) };
+            let event = MenuEvent::receiver()
+                .try_recv()
+                .context("no native Alt+Tab menu event")?;
+            anyhow::ensure!(
+                event.id() == app.menu.restore_on_alt_tab.id(),
+                "wrong Alt+Tab menu event"
+            );
+            app.handle(
+                app.menu
+                    .command(event.id())
+                    .context("unknown Alt+Tab event")?,
+            )?;
+            app.sync_menu();
+            anyhow::ensure!(
+                Config::load()?.restore_on_alt_tab == expected
+                    && app.menu.restore_on_alt_tab.is_checked() == expected,
+                "Alt+Tab preference did not reach config and menu"
+            );
+        }
+
+        let presets = unsafe { GetSubMenu(root, 3) };
+        let preset_id = unsafe { GetMenuItemID(presets, 0) };
+        unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(preset_id as usize)), None) };
+        let event = MenuEvent::receiver()
+            .try_recv()
+            .context("no native preset menu event")?;
+        app.handle(
+            app.menu
+                .command(event.id())
+                .context("unknown preset event")?,
+        )?;
+        app.sync_menu();
+        anyhow::ensure!(
+            Config::load()?.stretch == app.menu.presets[0].0 && app.menu.presets[0].1.is_checked(),
+            "preset did not reach config and menu"
+        );
+
+        let exit_id = unsafe { GetMenuItemID(root, 9) };
+        unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(exit_id as usize)), None) };
+        let event = MenuEvent::receiver()
+            .try_recv()
+            .context("no native Exit menu event")?;
+        anyhow::ensure!(
+            app.handle(app.menu.command(event.id()).context("unknown Exit event")?)?,
+            "Exit did not close the app"
+        );
+        anyhow::ensure!(
+            display::get_current_resolution()? == original,
+            "save-only menu actions changed the display"
+        );
+        println!(
+            "Shell registered the tray icon; native auto-stretch, Alt+Tab opt-in/out, preset, and Exit events reached the app. Display unchanged."
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mode_checks_follow_the_actual_display_and_presets_follow_saved_config() {
+        let config = Config::default();
+        let menu = TrayMenu::new(&config).unwrap();
+        let native = Mode {
+            width: 2560,
+            height: 1440,
+            refresh: 180,
+        };
+        let stretch = Mode {
+            width: 1440,
+            height: 1080,
+            refresh: 180,
+        };
+        menu.sync(&config, Some(native), Some(native), Some(native));
+        assert!(menu.native.is_checked());
+        assert!(!menu.stretch.is_checked());
+        menu.sync(&config, Some(stretch), Some(native), Some(native));
+        assert!(!menu.native.is_checked());
+        assert!(menu.stretch.is_checked());
+        assert_eq!(
+            menu.presets
+                .iter()
+                .filter(|(_, item)| item.is_checked())
+                .count(),
+            1
+        );
+        menu.sync(&config, None, Some(native), Some(native));
+        assert!(!menu.native.is_checked());
+        assert!(!menu.stretch.is_checked());
+    }
+}
