@@ -1,5 +1,7 @@
 use std::{
+    fs,
     io::{Read, Write},
+    path::Path,
     time::Duration,
 };
 
@@ -121,8 +123,39 @@ pub fn install(release: &Release) -> Result<()> {
         .context("stage update")?;
     staged.write_all(&bytes).context("write update")?;
     staged.flush()?;
-    self_replace::self_replace(staged.path())
-        .context("replace vstretch.exe; move it to a writable folder if access is denied")
+    replace_executable(staged.path())
+}
+
+fn replace_executable(replacement: &Path) -> Result<()> {
+    let executable = std::env::current_exe()
+        .context("locate vstretch.exe")?
+        .canonicalize()
+        .context("resolve vstretch.exe path")?;
+    let directory = executable.parent().context("executable has no directory")?;
+    let backup = tempfile::Builder::new()
+        .prefix("vstretch-backup-")
+        .suffix(".exe")
+        .tempfile_in(directory)
+        .context("back up vstretch.exe; move it to a writable folder if access is denied")?;
+    fs::copy(&executable, backup.path()).context("back up vstretch.exe")?;
+
+    // self-replace can move the original away before copying the replacement fails.
+    if let Err(error) = self_replace::self_replace(replacement) {
+        if executable.exists() {
+            return Err(error).context("replace vstretch.exe; existing executable was kept");
+        }
+        if let Err(restore) = backup.persist_noclobber(&executable) {
+            let mut backup = restore.file;
+            backup.disable_cleanup(true);
+            anyhow::bail!(
+                "update failed: {error}; restore failed: {}; original executable is saved at {}",
+                restore.error,
+                backup.path().display()
+            );
+        }
+        return Err(error).context("update failed; original executable was restored");
+    }
+    Ok(())
 }
 
 fn verify_binary(bytes: &[u8], release: &Release) -> Result<()> {
@@ -170,7 +203,7 @@ pub(crate) mod tests {
         use std::{fs, process::Command};
         const CHILD_REPLACEMENT: &str = "VSTRETCH_SELF_REPLACE_TEST";
         if let Some(replacement) = std::env::var_os(CHILD_REPLACEMENT) {
-            self_replace::self_replace(replacement).unwrap();
+            replace_executable(Path::new(&replacement)).unwrap();
             return;
         }
         let directory = tempfile::tempdir().unwrap();
@@ -197,6 +230,45 @@ pub(crate) mod tests {
         assert_eq!(fs::read(&original).unwrap(), updated);
         assert!(
             Command::new(&original)
+                .arg("--list")
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+
+    #[test]
+    fn failed_replacement_keeps_a_runnable_executable() {
+        use std::{fs, process::Command};
+        const CHILD_FAILURE: &str = "VSTRETCH_FAILED_REPLACE_TEST";
+        if std::env::var_os(CHILD_FAILURE).is_some() {
+            let executable = std::env::current_exe().unwrap();
+            let missing = executable.with_file_name("missing-replacement.exe");
+            assert!(replace_executable(&missing).is_err());
+            assert!(executable.exists(), "failed update removed the executable");
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("vstretch-test.exe");
+        let original = fs::read(std::env::current_exe().unwrap()).unwrap();
+        fs::write(&executable, &original).unwrap();
+        let child = Command::new(&executable)
+            .args([
+                "--exact",
+                "update::tests::failed_replacement_keeps_a_runnable_executable",
+            ])
+            .env(CHILD_FAILURE, "1")
+            .output()
+            .unwrap();
+        assert!(
+            child.status.success(),
+            "{}",
+            String::from_utf8_lossy(&child.stdout)
+        );
+        assert_eq!(fs::read(&executable).unwrap(), original);
+        assert!(
+            Command::new(&executable)
                 .arg("--list")
                 .output()
                 .unwrap()

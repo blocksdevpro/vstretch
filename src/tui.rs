@@ -312,12 +312,6 @@ impl App {
             }
             return;
         }
-        if matches!(self.update, UpdateState::Installing { .. })
-            && matches!(code, KeyCode::Char('q') | KeyCode::Esc)
-        {
-            self.set_ok("Finishing the update. You can quit when it completes.");
-            return;
-        }
         match self.screen {
             Screen::Home => self.on_home_key(code),
             Screen::Presets => self.on_preset_key(code),
@@ -590,13 +584,20 @@ fn draw_update_confirmation(f: &mut Frame, app: &App) {
         height,
     );
     f.render_widget(Clear, popup);
-    f.render_widget(Paragraph::new(format!(
-        "Install vstretch v{}?\n\nDownload and replace this executable. Your display config stays saved. Reopen vstretch after updating.\n\nEnter  install    Esc  later",
+    let message = format!(
+        "Install vstretch v{}?\n\n\
+         Download and replace this executable. Your display config stays saved. \
+         Reopen vstretch after updating.",
         release.version
-    )).wrap(Wrap { trim: true }).block(
-        Block::default().title(" Update available ").borders(Borders::ALL)
+    );
+    let confirmation = Paragraph::new(message).wrap(Wrap { trim: true }).block(
+        Block::default()
+            .title(" Update available ")
+            .title_bottom(" Enter  install    Esc  later ")
+            .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow)),
-    ), popup);
+    );
+    f.render_widget(confirmation, popup);
 }
 
 fn draw_status_panel(f: &mut Frame, app: &App, area: Rect) {
@@ -938,9 +939,29 @@ mod tests {
     }
 
     #[test]
+    fn installation_allows_leaving_resolution_pickers() {
+        let (_sender, receiver) = mpsc::channel();
+        let mut app = app(UpdateState::Installing {
+            version: "9.0.0".into(),
+            result: receiver,
+        });
+        for screen in [Screen::Presets, Screen::Native] {
+            for key in [KeyCode::Esc, KeyCode::Char('q'), KeyCode::Backspace] {
+                app.screen = screen;
+                app.on_key(key);
+                assert!(matches!(app.screen, Screen::Home));
+                assert!(!app.should_quit);
+                assert!(matches!(app.update, UpdateState::Installing { .. }));
+            }
+        }
+    }
+
+    #[test]
     fn update_rendering_handles_small_terminals() {
         let mut app = app(UpdateState::Available(update::tests::available_release()));
         app.confirm_update = true;
-        render(&mut app, 35, 15);
+        let popup = render(&mut app, 35, 15);
+        assert!(popup.contains("Install vstretch v9.0.0?"));
+        assert!(popup.contains("Enter  install    Esc  later"));
     }
 }
