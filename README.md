@@ -14,6 +14,24 @@ Built for the classic loop:
 
 ## Install
 
+Run this in **Windows PowerShell** to install the latest release and add it to your user PATH:
+
+```powershell
+irm https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 | iex
+```
+
+The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, and needs no admin rights. Run `vstretch` in PowerShell after installing. Open a new terminal if needed.
+
+For **Git Bash on Windows**, the equivalent command is:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.sh | sh
+```
+
+The shell installer calls Windows PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
+
+You can also download the executable directly:
+
 **Windows only.** No Rust, no cargo — just the exe.
 
 1. Grab **`vstretch.exe`** from the [latest release](https://github.com/blocksdevpro/vstretch/releases/latest)
@@ -47,9 +65,33 @@ vstretch
 | `Enter` | Select |
 | `1`–`5` | Quick actions |
 | `r` | Refresh display info |
+| `u` | Install an available update, or check again |
 | `q` / `Esc` | Quit (or back) |
 
 Everything lives in the TUI: toggle, native, stretch, and picking default stretch / native resolutions.
+
+### Updates
+
+The TUI checks GitHub for a newer stable release in the background when you open it. An update banner appears when a new version is available. Press `u`, then `Enter` to download and install it, or `Esc` to keep using your current version. Quit and reopen Vstretch after installation.
+
+Updates replace the executable in its current folder and preserve your display config. The download must match the release's SHA-256 digest before replacement. Offline checks show a retry message and keep the TUI usable. The hotkey command `--auto` skips update checks.
+
+You can also check or update from a terminal:
+
+```powershell
+vstretch --version
+vstretch --check-update
+vstretch --update
+```
+
+To install in a different folder without changing PATH, download and run the installer with options:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 -OutFile install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir C:\Tools\vstretch -NoPath
+```
+
+Close Vstretch before running the installer again. The in-app updater can replace its own running executable.
 
 ### Hotkey toggle
 

@@ -3,6 +3,7 @@
 mod config;
 mod display;
 mod tui;
+mod update;
 
 #[cfg(not(windows))]
 compile_error!("vstretch is Windows-only (uses Win32 display APIs)");
@@ -15,19 +16,43 @@ use config::Config;
 ///
 /// Run with no flags to open the TUI. Use `--auto` for a quiet hotkey toggle.
 #[derive(Parser)]
-#[command(name = "vstretch")]
+#[command(name = "vstretch", version)]
 #[command(about = "Native ↔ stretch resolution switcher for FPS (TUI)")]
 #[command(
     after_help = "Examples:\n  vstretch          Open the TUI\n  vstretch --auto   Toggle resolution (for hotkeys)"
 )]
 struct Cli {
     /// Toggle native ↔ stretch without opening the TUI (for hotkeys)
-    #[arg(short = 'a', long)]
+    #[arg(short = 'a', long, conflicts_with_all = ["check_update", "update"])]
     auto: bool,
+
+    /// Check GitHub for a newer stable release
+    #[arg(long, conflicts_with = "update")]
+    check_update: bool,
+
+    /// Download, verify, and install the latest stable release
+    #[arg(long)]
+    update: bool,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if cli.check_update || cli.update {
+        match update::check()? {
+            Some(release) if cli.update => {
+                println!("Installing vstretch {}...", release.version);
+                update::install(&release)?;
+                println!("Updated to {}. Reopen vstretch to use it.", release.version);
+            }
+            Some(release) => println!(
+                "vstretch {} is available. Run vstretch --update to install it.",
+                release.version
+            ),
+            None => println!("vstretch {} is up to date.", env!("CARGO_PKG_VERSION")),
+        }
+        return Ok(());
+    }
 
     if cli.auto {
         let config = Config::load().context("no config yet — run `vstretch` once to set up")?;
