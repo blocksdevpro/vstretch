@@ -11,6 +11,19 @@ use winreg::{
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const VALUE: &str = "Vstretch";
 
+/// Apply the default once; later launches leave the user's startup choice alone.
+pub fn initialize(config: &mut crate::config::Config) -> Result<()> {
+    if config.start_with_windows.is_some() {
+        return Ok(());
+    }
+    set_enabled(true)?;
+    let mut next = config.clone();
+    next.start_with_windows = Some(true);
+    next.save_default_path()?;
+    *config = next;
+    Ok(())
+}
+
 fn command(executable: &Path) -> Result<String> {
     let path = executable
         .to_str()

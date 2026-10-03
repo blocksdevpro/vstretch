@@ -160,6 +160,9 @@ pub struct Config {
     pub auto_stretch: bool,
     #[serde(default)]
     pub restore_on_alt_tab: bool,
+    /// None until the tray applies the first-launch Windows startup default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_with_windows: Option<bool>,
 }
 
 fn auto_stretch_default() -> bool {
@@ -184,6 +187,7 @@ impl Default for Config {
             native: None,
             auto_stretch: auto_stretch_default(),
             restore_on_alt_tab: false,
+            start_with_windows: None,
         }
     }
 }
@@ -203,6 +207,7 @@ impl From<LegacyConfig> for Config {
             native: legacy.default_native_profile,
             auto_stretch: auto_stretch_default(),
             restore_on_alt_tab: false,
+            start_with_windows: None,
         }
     }
 }
@@ -477,6 +482,7 @@ mod tests {
         let c = Config::default();
         assert!(c.native.is_none());
         assert!(!c.restore_on_alt_tab);
+        assert!(c.start_with_windows.is_none());
         assert_eq!(c.stretch, Profile::new(1440, 1080));
         c.validate().unwrap();
     }
@@ -507,6 +513,7 @@ refresh = 165
         assert!(!migrated);
         assert!(c.auto_stretch);
         assert!(!c.restore_on_alt_tab);
+        assert!(c.start_with_windows.is_none());
         assert_eq!(c.stretch, Profile::new(1280, 960));
         let n = c.native.as_ref().expect("native override");
         assert_eq!((n.width, n.height, n.refresh), (1920, 1080, Some(165)));
@@ -526,6 +533,25 @@ refresh = 165
         assert!(!loaded.auto_stretch);
         assert!(loaded.restore_on_alt_tab);
         assert_eq!(loaded.stretch, c.stretch);
+    }
+
+    #[test]
+    fn startup_opt_out_survives_saving_other_preferences() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("config.toml");
+        let config = Config {
+            start_with_windows: Some(false),
+            ..Config::default()
+        };
+        config.save(&path)?;
+        let mut loaded = Config::load_from_path(&path)?;
+        assert_eq!(loaded.start_with_windows, Some(false));
+        loaded.stretch = Profile::new(1280, 960);
+        loaded.save(&path)?;
+        let reloaded = Config::load_from_path(&path)?;
+        assert_eq!(reloaded.start_with_windows, Some(false));
+        assert_eq!(reloaded.stretch, loaded.stretch);
+        Ok(())
     }
 
     #[test]

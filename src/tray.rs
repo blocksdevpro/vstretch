@@ -202,6 +202,9 @@ impl App {
             error: None,
         };
         app.refresh_display();
+        if let Err(error) = startup::initialize(&mut app.config) {
+            app.error = Some(format!("Startup settings: {error:#}"));
+        }
         app.refresh_startup();
         app.sync_menu();
         Ok(app)
@@ -352,7 +355,14 @@ impl App {
                 self.config = next;
                 self.run_auto();
             }
-            Command::Startup => startup::set_enabled(!startup::enabled()?)?,
+            Command::Startup => {
+                let enabled = !startup::enabled()?;
+                let mut next = self.config.clone();
+                next.start_with_windows = Some(enabled);
+                next.save_default_path()?;
+                self.config = next;
+                startup::set_enabled(enabled)?;
+            }
             Command::Exit => {
                 self.restore_on_exit()?;
                 return Ok(true);
@@ -486,6 +496,7 @@ mod tests {
         let _restore = RestoreDisplay(original);
         let config = Config {
             stretch: Profile::new(1280, 960),
+            start_with_windows: Some(false),
             native: Some(Profile {
                 width: original.width,
                 height: original.height,
@@ -634,6 +645,7 @@ mod tests {
         // A native override equal to the active desktop makes preset selection
         // a save-only operation even if the test machine is already stretched.
         let config = Config {
+            start_with_windows: Some(false),
             native: Some(Profile {
                 width: original.width,
                 height: original.height,
