@@ -3,6 +3,7 @@
 use std::mem;
 
 use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
 use windows::{
     Win32::{
         Devices::Display::{
@@ -13,16 +14,18 @@ use windows::{
         },
         Foundation::{ERROR_NOT_FOUND, ERROR_SUCCESS, WIN32_ERROR},
         Graphics::Gdi::{
-            CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODE_DISPLAY_FIXED_OUTPUT, DEVMODEW,
-            DISP_CHANGE, DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS, DISP_CHANGE_BADMODE,
-            DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED, DISP_CHANGE_RESTART,
-            DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW,
-            DISPLAYCONFIG_PATH_ACTIVE, DM_DISPLAYFIXEDOUTPUT, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT,
-            DM_PELSWIDTH, DMDFO_STRETCH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE,
+            CDS_TYPE, CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODE_DISPLAY_FIXED_OUTPUT,
+            DEVMODEW, DISP_CHANGE, DISP_CHANGE_BADDUALVIEW, DISP_CHANGE_BADFLAGS,
+            DISP_CHANGE_BADMODE, DISP_CHANGE_BADPARAM, DISP_CHANGE_FAILED, DISP_CHANGE_NOTUPDATED,
+            DISP_CHANGE_RESTART, DISP_CHANGE_SUCCESSFUL, DISPLAY_DEVICE_ACTIVE,
+            DISPLAY_DEVICE_PRIMARY_DEVICE, DISPLAY_DEVICEW, DISPLAYCONFIG_PATH_ACTIVE,
+            DM_DISPLAYFIXEDOUTPUT, DM_DISPLAYFREQUENCY, DM_PELSHEIGHT, DM_PELSWIDTH, DMDFO_STRETCH,
+            ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE, ENUM_REGISTRY_SETTINGS,
             EnumDisplayDevicesW, EnumDisplaySettingsW,
         },
+        UI::WindowsAndMessaging::EDD_GET_DEVICE_INTERFACE_NAME,
     },
-    core::Error as WinError,
+    core::{Error as WinError, PCWSTR},
 };
 
 use crate::config::Profile;
@@ -30,11 +33,107 @@ use crate::config::Profile;
 /// Last-resort Hz when CCD and the profile both omit refresh.
 pub const FALLBACK_REFRESH_HZ: u32 = 60;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Mode {
     pub width: u32,
     pub height: u32,
     pub refresh: u32,
+}
+
+/// The monitor identity and settings needed to recover an interrupted session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesktopSnapshot {
+    pub monitor: String,
+    pub mode: Mode,
+    pub scaling: Option<u32>,
+}
+
+impl DesktopSnapshot {
+    /// Unknown scaling cannot prove that an explicit scaling request is active.
+    pub(crate) fn matches_settings(&self, mode: Mode, scaling: Option<u32>) -> bool {
+        self.mode == mode && scaling.is_none_or(|value| self.scaling == Some(value))
+    }
+}
+
+fn mode_from_devmode(devmode: &DEVMODEW) -> Mode {
+    Mode {
+        width: devmode.dmPelsWidth,
+        height: devmode.dmPelsHeight,
+        refresh: devmode.dmDisplayFrequency,
+    }
+}
+
+pub fn desktop_snapshot() -> Result<DesktopSnapshot> {
+    let name = primary_display_name()?;
+    let mut monitors = Vec::new();
+    let mut index = 0;
+    loop {
+        let mut device = DISPLAY_DEVICEW {
+            cb: mem::size_of::<DISPLAY_DEVICEW>() as u32,
+            ..Default::default()
+        };
+        // SAFETY: name is nul-terminated; cb describes the writable device buffer.
+        if !unsafe {
+            EnumDisplayDevicesW(
+                PCWSTR(name.as_ptr()),
+                index,
+                &mut device,
+                EDD_GET_DEVICE_INTERFACE_NAME,
+            )
+        }
+        .as_bool()
+        {
+            break;
+        }
+        if device.StateFlags & DISPLAY_DEVICE_ACTIVE != Default::default() {
+            let end = device
+                .DeviceID
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(device.DeviceID.len());
+            let id = String::from_utf16_lossy(&device.DeviceID[..end]);
+            if !id.is_empty() {
+                monitors.push(id);
+            }
+        }
+        index += 1;
+    }
+    anyhow::ensure!(
+        !monitors.is_empty(),
+        "could not identify the primary monitor for crash recovery"
+    );
+    // Clone displays can share a source; changing that set invalidates recovery.
+    monitors.sort();
+    let mut devmode = empty_devmode();
+    // SAFETY: name and the correctly sized output buffer remain valid for the call.
+    anyhow::ensure!(
+        unsafe { EnumDisplaySettingsW(PCWSTR(name.as_ptr()), ENUM_CURRENT_SETTINGS, &mut devmode) }
+            .as_bool(),
+        "could not capture the desktop for crash recovery"
+    );
+    let scaling = if devmode.dmFields.contains(DM_DISPLAYFIXEDOUTPUT) {
+        // SAFETY: the display setting's field flag identifies this union member.
+        Some(unsafe { devmode.Anonymous1.Anonymous2.dmDisplayFixedOutput }.0)
+    } else {
+        None
+    };
+    Ok(DesktopSnapshot {
+        monitor: monitors.join("\n"),
+        mode: mode_from_devmode(&devmode),
+        scaling,
+    })
+}
+
+pub fn get_saved_resolution() -> Result<Mode> {
+    let mut devmode = empty_devmode();
+    // SAFETY: dmSize describes the writable output buffer.
+    anyhow::ensure!(
+        unsafe { EnumDisplaySettingsW(None, ENUM_REGISTRY_SETTINGS, &mut devmode) }.as_bool(),
+        "could not read the saved Windows display mode"
+    );
+    Ok(mode_from_devmode(&devmode))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,11 +372,29 @@ fn change_resolution_with_scaling(
     mode: Mode,
     scaling: Option<DEVMODE_DISPLAY_FIXED_OUTPUT>,
 ) -> Result<()> {
+    crate::recovery::change(mode, scaling.map(|value| value.0))
+}
+
+/// Only an explicit Native choice repairs a stretch default saved by old versions.
+pub fn restore_native(mode: Mode, stretch: &Profile) -> Result<()> {
+    crate::recovery::restore_native(mode, stretch)
+}
+
+pub(crate) fn apply_display_settings(
+    mode: Mode,
+    scaling: Option<u32>,
+    save_default: bool,
+) -> Result<()> {
+    let scaling = scaling.map(DEVMODE_DISPLAY_FIXED_OUTPUT);
     let devmode = resolution_devmode(mode, scaling);
+    let flags = if save_default {
+        CDS_UPDATEREGISTRY
+    } else {
+        CDS_TYPE(0)
+    };
     // SAFETY: dmSize and dmFields describe the initialized settings, and Windows
     // borrows the structure only for this call.
-    let result =
-        unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, CDS_UPDATEREGISTRY, None) };
+    let result = unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, flags, None) };
     check_display_change(result, mode)
 }
 
@@ -314,7 +431,7 @@ pub fn toggle_stretch(profile: &Profile, native: Mode, panel_refresh: u32) -> Re
     if current.size_eq(native) {
         apply_profile(profile, panel_refresh)
     } else {
-        change_resolution(native)?;
+        restore_native(native, profile)?;
         Ok(native)
     }
 }
@@ -383,6 +500,17 @@ pub fn classify_mode(
 mod tests {
     use super::*;
     use crate::config::Profile;
+
+    #[test]
+    fn recovery_snapshot_identifies_the_real_primary_monitor() -> Result<()> {
+        let snapshot = desktop_snapshot()?;
+        assert!(!snapshot.monitor.is_empty());
+        assert_eq!(snapshot.mode, get_current_resolution()?);
+        assert!(snapshot.scaling.is_none_or(|value| value <= 2));
+        let saved = get_saved_resolution()?;
+        assert!(saved.width > 0 && saved.height > 0 && saved.refresh > 0);
+        Ok(())
+    }
 
     #[test]
     #[ignore = "requires a local display supporting 1280x960; does not change display settings"]

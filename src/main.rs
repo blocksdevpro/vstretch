@@ -7,6 +7,7 @@ mod autostretch;
 mod config;
 mod display;
 mod platform;
+mod recovery;
 mod startup;
 mod tray;
 mod tui;
@@ -87,18 +88,29 @@ fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    if cli.auto {
-        let config = Config::load().context("load configuration for the display toggle")?;
-        let panel = display::get_native_resolution().ok();
-        let native = display::resolve_native(config.native.as_ref(), panel)?;
-        let mode = display::toggle_stretch(
-            &config.stretch,
-            native,
-            display::stretch_refresh(panel, Some(native)),
-        )?;
-        println!("{} [{}]", mode.label(), config.stretch.name());
-        return Ok(());
-    }
+    let recovered = recovery::recover().context("recover interrupted display session")?;
+    let result = (|| {
+        if cli.auto {
+            let config = Config::load().context("load configuration for the display toggle")?;
+            let panel = display::get_native_resolution().ok();
+            let native = display::resolve_native(config.native.as_ref(), panel)?;
+            // A hotkey that just recovered stretch must not immediately apply it again.
+            let mode = match recovered {
+                Some(mode) => mode,
+                None => display::toggle_stretch(
+                    &config.stretch,
+                    native,
+                    display::stretch_refresh(panel, Some(native)),
+                )?,
+            };
+            println!("{} [{}]", mode.label(), config.stretch.name());
+            return Ok(());
+        }
 
-    if cli.tui { tui::run() } else { tray::run() }
+        if cli.tui { tui::run() } else { tray::run() }
+    })();
+    if result.is_ok() {
+        recovery::finish().context("finish display session")?;
+    }
+    result
 }

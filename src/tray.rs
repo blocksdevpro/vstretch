@@ -303,7 +303,7 @@ impl App {
         match command {
             Command::Native => {
                 let native = self.native.context("could not detect native resolution")?;
-                display::change_resolution(native)?;
+                display::restore_native(native, &self.config.stretch)?;
                 self.auto.manual_choice();
             }
             Command::Stretch => {

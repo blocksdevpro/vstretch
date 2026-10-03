@@ -11,8 +11,9 @@ use anyhow::{Context, Result, bail};
 use windows::{
     Win32::{
         Foundation::{
-            CloseHandle, ERROR_ALREADY_EXISTS, ERROR_NO_MORE_FILES, GetLastError, HANDLE,
-            WAIT_ABANDONED, WAIT_FAILED, WAIT_OBJECT_0,
+            CloseHandle, ERROR_ALREADY_EXISTS, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES,
+            FILETIME, GetLastError, HANDLE, WAIT_ABANDONED, WAIT_FAILED, WAIT_OBJECT_0,
+            WAIT_TIMEOUT,
         },
         System::{
             Console::{ATTACH_PARENT_PROCESS, AllocConsole, AttachConsole, GetConsoleCP},
@@ -21,9 +22,9 @@ use windows::{
                 TH32CS_SNAPPROCESS,
             },
             Threading::{
-                CreateMutexW, INFINITE, OpenProcess, PROCESS_NAME_WIN32,
-                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW, ReleaseMutex,
-                WaitForSingleObject,
+                CreateMutexW, GetCurrentProcess, GetProcessTimes, INFINITE, OpenProcess,
+                PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                QueryFullProcessImageNameW, ReleaseMutex, WaitForSingleObject,
             },
         },
         UI::WindowsAndMessaging::{
@@ -81,6 +82,19 @@ impl Drop for ConfigFileLock {
 /// Coordinates short reads and replacements across tray and terminal processes.
 pub fn config_file_lock(config_path: &Path) -> Result<ConfigFileLock> {
     let name = mutex_name(config_path, "ConfigFile")?;
+    named_lock(&name)
+}
+
+/// All tray, terminal, and hotkey processes change the same primary display.
+pub fn display_lock() -> Result<ConfigFileLock> {
+    let name: Vec<u16> = "Local\\vstretch.Display"
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    named_lock(&name)
+}
+
+fn named_lock(name: &[u16]) -> Result<ConfigFileLock> {
     // SAFETY: name is nul-terminated; the returned handle is owned until it closes.
     let handle = OwnedHandle(
         unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
@@ -93,6 +107,57 @@ pub fn config_file_lock(config_path: &Path) -> Result<ConfigFileLock> {
         WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(ConfigFileLock(handle)),
         WAIT_FAILED => Err(WinError::from_thread()).context("could not acquire config file lock"),
         status => bail!("unexpected config file lock status: {}", status.0),
+    }
+}
+
+/// Creation time distinguishes a live owner from a reused Windows process ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub created: u64,
+}
+
+fn process_created(handle: HANDLE) -> Result<u64> {
+    let mut created = FILETIME::default();
+    let mut exited = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    // SAFETY: handle is valid; every output points to a writable FILETIME.
+    unsafe { GetProcessTimes(handle, &mut created, &mut exited, &mut kernel, &mut user) }
+        .context("read display session owner's creation time")?;
+    Ok((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
+}
+
+pub fn current_process_identity() -> Result<ProcessIdentity> {
+    Ok(ProcessIdentity {
+        pid: std::process::id(),
+        // SAFETY: Windows' current-process pseudo-handle needs no CloseHandle.
+        created: process_created(unsafe { GetCurrentProcess() })?,
+    })
+}
+
+pub fn process_is_alive(identity: ProcessIdentity) -> Result<bool> {
+    // SAFETY: OpenProcess validates the ID and returns an owned handle.
+    let handle = match unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            false,
+            identity.pid,
+        )
+    } {
+        Ok(handle) => OwnedHandle(handle),
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) => {
+            return Ok(false);
+        }
+        Err(error) => return Err(error).context("check display session owner"),
+    };
+    // SAFETY: the process handle stays alive throughout this nonblocking query.
+    match unsafe { WaitForSingleObject(handle.0, 0) } {
+        WAIT_OBJECT_0 => Ok(false),
+        WAIT_TIMEOUT => Ok(process_created(handle.0)? == identity.created),
+        WAIT_FAILED => Err(WinError::from_thread()).context("check display session owner"),
+        status => bail!("unexpected process wait status: {}", status.0),
     }
 }
 
@@ -203,6 +268,17 @@ fn is_game_executable(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_owner_checks_process_creation_time() -> Result<()> {
+        let current = current_process_identity()?;
+        assert!(process_is_alive(current)?);
+        assert!(!process_is_alive(ProcessIdentity {
+            created: current.created + 1,
+            ..current
+        })?);
+        Ok(())
+    }
 
     #[test]
     fn process_snapshot_detects_game_launch_and_exit() -> Result<()> {

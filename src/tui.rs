@@ -208,7 +208,7 @@ impl App {
 
     fn run_native(&mut self) {
         match self.effective_native() {
-            Ok(native) => match display::change_resolution(native) {
+            Ok(native) => match display::restore_native(native, &self.config.stretch) {
                 Ok(()) => {
                     self.set_ok(format!("Native → {}", native.label()));
                     self.refresh_display();
