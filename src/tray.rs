@@ -630,7 +630,7 @@ mod tests {
         };
         anyhow::ensure!(
             std::env::var_os("VSTRETCH_CONFIG").is_some(),
-            "run through scripts/test-tray.ps1 to isolate configuration"
+            "set VSTRETCH_CONFIG to an isolated absolute config path before running"
         );
         let initial = Config::load_or_init()?;
         anyhow::ensure!(

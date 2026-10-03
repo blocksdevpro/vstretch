@@ -25,7 +25,7 @@ To install with **Windows PowerShell** and add Vstretch to your user PATH, run:
 irm https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 | iex
 ```
 
-The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, and needs no admin rights. Double-click that executable or run `vstretch` to start the tray app.
+The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates a per-user Start Menu shortcut, and needs no admin rights. Search for **vstretch** in Start to open or reopen the tray app, or run `vstretch` from a terminal. Running the installer again also repairs the shortcut.
 
 For **Git Bash on Windows**, the equivalent command is:
 
@@ -68,15 +68,21 @@ Left-click or right-click the tray icon to open the menu:
 | **Start with Windows** | Enable or disable launch at sign-in for your Windows account |
 | **Exit** | Close the tray app; restore an automatic display change that it still owns |
 
-The Mode checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Opening the app again keeps a single tray instance.
+The Mode checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
 
 Auto-stretch is enabled by default. It detects `VALORANT-Win64-Shipping.exe` and `cs2.exe`, applies your preset when the game gains focus, and restores the previous desktop when you close the game. Alt+Tab leaves the resolution unchanged by default. Enable **Restore desktop on Alt+Tab** if you want focus-based switching. The option is off for new and existing configurations unless you enable it.
 
 Disable auto-stretch in the menu if you prefer manual switching. Manual mode choices and display changes from other apps pause the automatic session until the game exits. If you opt in to Alt+Tab restoration, that pause lasts until the game loses focus.
 
-**Start with Windows** is off by default. It adds a per-user startup entry and requires no admin rights. Keep the executable in the same folder after enabling it. If you move it, enable the option again from its new location.
+**Start with Windows** is enabled automatically on the first tray launch. It adds a per-user startup entry and requires no admin rights. You can turn it off in the tray menu; that choice is remembered across launches. Keep the executable in the same folder. If you move it, enable the option again from its new location.
 
 Errors appear in the tray menu and tooltip. Manual failures also open an error dialog. Failed automatic switches wait for the current session to end before trying again. Manually applied modes remain active after Exit.
+
+**Exit** ends the background process and automatic detection. To bring it back, search for **vstretch** in Start if you used the installer, or double-click your saved executable. With **Start with Windows** enabled, it also opens automatically at your next sign-in.
+
+Stretch switches are temporary and do not replace the saved Windows desktop mode used after reboot. If Vstretch crashes while it owns a display change, its next launch restores the previous desktop resolution, refresh rate, and reported scaling setting. Recovery runs only after the owning process has ended and the same monitor still has the recorded mode. Changes from another app or the user are left in place.
+
+An unfinished session is recorded in `%APPDATA%\vstretch\config.recovery.toml`, next to the configuration file. Clean Exit and successful hotkey commands clear their recovery record, preserving manual modes until you change them or reboot. If an older Vstretch version saved your current stretch preset as the Windows default, choose **Mode → Native** once with this version to repair that saved default.
 
 ### Terminal interface
 
@@ -120,6 +126,8 @@ Invoke-WebRequest https://raw.githubusercontent.com/blocksdevpro/vstretch/main/i
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir C:\Tools\vstretch -NoPath
 ```
 
+`-NoPath` still creates the Start Menu shortcut. Add `-NoShortcut` to skip it.
+
 Close Vstretch before running the installer again. The in-app updater can replace its own running executable.
 
 ### Hotkey toggle
@@ -151,6 +159,7 @@ Set `VSTRETCH_CONFIG` to an absolute file path to use a separate configuration, 
 
 auto_stretch = true
 restore_on_alt_tab = false
+start_with_windows = true
 
 [stretch]
 width = 1440
@@ -169,14 +178,17 @@ refresh = 180
 - Native res is detected from the panel (CCD) unless you set an override
 - Stretch requests full-screen scaling to fill the display
 - Set the same resolution in-game. If a game overrides desktop scaling, select full-screen scaling in the game or GPU control panel
+- Animated wallpaper apps must react to the desktop resolution change. Wallpaper Engine has been reported to show sizing artifacts, black lines, temporary pixelation, or frozen animation during Stretch; returning to Native fixes the reported problem. Repeated selections skip unchanged display settings, but a complete wallpaper fix is still under investigation.
 
 ## Development checks
 
-Run `cargo test` and `cargo clippy --all-targets -- -D warnings`. Run `powershell -NoProfile -File scripts/test-tray.ps1` to check the built executable's CLI output, console-free launch, isolated first-run configuration, native menu events, and duplicate launch handling. The tray check uses temporary config and does not switch resolutions or edit Windows startup entries.
+```powershell
+cargo fmt --all -- --check
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
 
-Add `-Release` to check the optimized executable instead of the debug build.
-
-For local integration checks, add `-SwitchDisplay` to temporarily apply 1280x960 and 1440x1080 and verify automatic and manual restoration. Add `-CheckStartup` to verify the actual Windows startup entry. These checks restore the original display mode and startup value when finished.
+Display-switching, Windows shell, and startup integration tests are ignored by default. Run them individually with `cargo test <test-name> -- --ignored --exact --nocapture`; tray integration tests require `VSTRETCH_CONFIG` set to an isolated absolute config path. Real display and startup tests temporarily change those Windows settings and restore them afterward.
 
 ## License
 
