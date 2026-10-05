@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-sans: var(--font-dm-sans);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--secondary);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: #b42318;
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--primary);
+  --color-peach: #f9e9e1;
+  --color-brand: #df755e;
+  --color-success: #387a68;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --background: #fbfaf7;
+  --foreground: #252827;
+  --card: #ffffff;
+  --primary: #bc513d;
+  --secondary: #f1f0ea;
+  --muted-foreground: #555d52;
+  --border: #e8e7e0;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { scroll-behavior: smooth; scroll-padding-top: 2rem; }
+  body { @apply bg-background text-foreground font-sans antialiased; }
+  button, a, [role="button"] { -webkit-tap-highlight-color: transparent; }
+  :focus-visible { @apply outline-2 outline-offset-4 outline-primary; }
+  ::selection { background: #f3d6cb; color: #252827; }
+}
+
+/* Only the display illustration needs custom geometry. Layout uses Tailwind. */
+.display-grid {
+  position: absolute;
+  inset: -20%;
+  background-image: linear-gradient(#cad4c42e 1px, transparent 1px), linear-gradient(90deg, #cad4c42e 1px, transparent 1px);
+  background-size: 30px 30px;
+  transition: transform 450ms ease;
+}
+.display-crosshair {
+  position: absolute;
+  top: 43%;
+  left: 50%;
+  width: 76px;
+  height: 76px;
+  transform: translate(-50%, -50%);
+  transition: transform 450ms ease;
+}
+.display-crosshair::before, .display-crosshair::after {
+  content: "";
+  position: absolute;
+  background: #6f8574;
+  opacity: 0.8;
+}
+.display-crosshair::before { width: 1px; height: 112px; left: 50%; top: -18px; }
+.display-crosshair::after { width: 112px; height: 1px; top: 50%; left: -18px; }
+[data-display="stretch"] .display-grid { transform: scaleX(1.3333); }
+[data-display="stretch"] .display-crosshair { transform: translate(-50%, -50%) scaleX(1.3333); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

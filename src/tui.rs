@@ -1,3 +1,5 @@
+//! Terminal controls for profiles, manual display changes, and verified updates.
+
 use std::io::{self, stdout};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -5,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -36,6 +39,7 @@ enum UpdateState {
     Installed(String),
 }
 
+/// Runs network and replacement work without blocking terminal input or drawing.
 fn background<T: Send + 'static>(
     task: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> UpdateResult<T> {
@@ -204,7 +208,7 @@ impl App {
 
     fn run_native(&mut self) {
         match self.effective_native() {
-            Ok(native) => match display::change_resolution(native) {
+            Ok(native) => match display::restore_native(native, &self.config.stretch) {
                 Ok(()) => {
                     self.set_ok(format!("Native → {}", native.label()));
                     self.refresh_display();
@@ -225,7 +229,7 @@ impl App {
             && display::preferred_override_mode(&self.native_modes, over, self.panel).is_none()
         {
             self.native_modes
-                .insert(0, display::synthetic_override_mode(over, self.panel));
+                .insert(0, display::native_override_mode(over, self.panel));
         }
         let idx = match &self.config.native {
             None => 0,
@@ -421,7 +425,8 @@ impl App {
     }
 
     fn on_native_key(&mut self, code: KeyCode) {
-        let len = self.native_choice_len().max(1);
+        // The Auto row is always present, even when Windows reports no modes.
+        let len = self.native_choice_len();
         match code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
                 self.screen = Screen::Home;
@@ -450,21 +455,27 @@ impl App {
     }
 }
 
+struct TerminalSession;
+
+impl Drop for TerminalSession {
+    fn drop(&mut self) {
+        // Cleanup must also run when entering the screen or creating the backend
+        // fails. Ignore cleanup errors so the original failure stays visible.
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+    }
+}
+
 pub fn run() -> Result<()> {
     let mut app = App::new()?;
     enable_raw_mode().context("enable raw mode")?;
+    let _session = TerminalSession;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen).context("enter alternate screen")?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).context("create terminal")?;
 
-    let result = run_loop(&mut terminal, &mut app);
-
-    disable_raw_mode().ok();
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).ok();
-    terminal.show_cursor().ok();
-
-    result
+    run_loop(&mut terminal, &mut app)
 }
 
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
@@ -699,7 +710,7 @@ fn draw_presets(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(Color::DarkGray),
                 ),
             ];
-            // Fixed-width tag column (only one "common", one "popular" in the list)
+            // Reserve the tag column so the saved-preset star lines up on every row.
             let (tag, tag_color) = match p.tag {
                 Some("popular") => ("popular", Color::Magenta),
                 Some("common") => ("common ", Color::Cyan),

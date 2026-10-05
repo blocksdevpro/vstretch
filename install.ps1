@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'vstretch\bin'),
-    [switch]$NoPath
+    [switch]$NoPath,
+    [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -93,9 +94,34 @@ try {
             $env:Path = $env:Path.TrimEnd(';') + ';' + $InstallDir
         }
     }
+    if (-not $NoShortcut) {
+        $programs = [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+        if (-not $programs) {
+            throw 'Windows did not report your Start Menu Programs folder.'
+        }
+        $null = New-Item -ItemType Directory -Path $programs -Force
+        $shell = New-Object -ComObject WScript.Shell
+        $shortcut = $null
+        try {
+            $shortcut = $shell.CreateShortcut((Join-Path $programs 'vstretch.lnk'))
+            $shortcut.TargetPath = $destination
+            $shortcut.Arguments = ''
+            $shortcut.WorkingDirectory = $InstallDir
+            $shortcut.IconLocation = "$destination,0"
+            $shortcut.Description = 'Vstretch - native and stretched display modes'
+            $shortcut.Save()
+        } finally {
+            if ($null -ne $shortcut) {
+                $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut)
+            }
+            $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+        }
+    }
     Write-Host "Installed vstretch $($release.tag_name) to $destination"
-    if (-not $NoPath) {
-        Write-Host 'Run vstretch in PowerShell. Open a new terminal if needed.'
+    if (-not $NoShortcut) {
+        Write-Host 'Search for vstretch in Start to open or reopen its system tray menu.'
+    } else {
+        Write-Host 'Double-click vstretch.exe to open or reopen its system tray menu.'
     }
 } finally {
     if (Test-Path -LiteralPath $staged) {
