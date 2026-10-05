@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 4173",
+    "prebuild": "node scripts/sync-site-assets.mjs",
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "check": "node scripts/check-site.mjs"

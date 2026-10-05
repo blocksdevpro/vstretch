@@ -7,7 +7,7 @@ import { Disclosure } from "@/components/disclosure";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { downloadUrl, repository } from "@/lib/site";
+import { changelogEndpoint, downloadEndpoint, repository } from "@/lib/site";
 import { getLatestRelease, type Release } from "@/lib/release";
 
 const steps = [
@@ -37,7 +37,7 @@ function DownloadDetails({ release }: { release: Release | null }) {
 
 export default async function Home() {
   const release = await getLatestRelease();
-  const executableUrl = release?.downloadUrl ?? downloadUrl;
+  const executableUrl = downloadEndpoint;
   const releaseUrl = release?.releaseUrl ?? `${repository}/releases/latest`;
   return (
     <>
@@ -48,6 +48,7 @@ export default async function Home() {
           <nav aria-label="Main navigation" className="flex items-center gap-[18px] text-sm font-medium text-[#595e58] md:gap-7">
             <a href="#how-it-works" className="hidden hover:text-primary sm:block">How it works</a>
             <a href="#questions" className="hover:text-primary">FAQ</a>
+            <a href={changelogEndpoint} className="hidden hover:text-primary sm:block">Changelog</a>
             <a href={repository} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:text-primary"><GitHubMark />GitHub</a>
           </nav>
         </header>
@@ -88,14 +89,14 @@ export default async function Home() {
               <div><h2 id="install-title" className="mb-2 text-[25px] font-medium leading-[1.3] tracking-[-0.035em] md:text-[27px]">Ready for your next match.</h2><p className="text-base leading-relaxed text-[#786453]">{release?.terminalOnly ? "Terminal release now. Tray app coming in v1.2.0." : "Download. Double-click. Find it beside your clock."}</p></div>
               <Button asChild className={`${downloadButton} shrink-0`}><a href={executableUrl}><Download aria-hidden="true" />Get vstretch.exe</a></Button>
             </div>
-            <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[#765f4c]"><span>Unsigned app</span><a href={release?.sourceUrl ?? repository} className={textLink}>Source code</a><a href={releaseUrl} className={textLink}>SHA-256</a></div>
+            <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#765f4c]"><span>Free &amp; open source</span><a href={release?.sourceUrl ?? repository} className={textLink}>Source</a><a href={releaseUrl} className={textLink}>SHA-256</a><a href={changelogEndpoint} className={textLink}>Changelog</a></div>
             <details id="download-checks" className="group border-t border-[#e3cebf] text-[#765f4c]">
-              <summary className="flex min-h-[52px] cursor-pointer list-none items-center justify-between gap-5 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">SmartScreen &amp; checksum<ChevronDown aria-hidden="true" className="size-3.5 shrink-0 transition-transform group-open:rotate-180" /></summary>
-              <div className="max-w-[60ch] space-y-4 pb-5 text-base leading-relaxed">
-                <p>The unsigned app may trigger &ldquo;Windows protected your PC.&rdquo; Check the <a href={release?.sourceUrl ?? repository} className={textLink}>source</a> and <a href={releaseUrl} className={textLink}>release checksum</a> before running it.</p>
+              <summary className="flex min-h-[40px] cursor-pointer list-none items-center justify-between gap-5 py-2 text-xs font-normal [&::-webkit-details-marker]:hidden">Verify download<ChevronDown aria-hidden="true" className="size-3 shrink-0 transition-transform group-open:rotate-180" /></summary>
+              <div className="max-w-[60ch] space-y-3 pb-4 text-sm leading-relaxed">
+                <p>Windows may ask you to confirm a new app. To check this file, compare its hash with the <a href={releaseUrl} className={textLink}>release checksum</a>.</p>
                 <pre className="overflow-x-auto rounded-lg border border-[#e3cebf] bg-[#fffbf7] p-3 text-sm text-foreground"><code>Get-FileHash .\vstretch.exe -Algorithm SHA256</code></pre>
-                {release?.sha256 && <div><p className="mb-2 text-sm">SHA-256 · {release.version}</p><code className="block break-all text-sm text-foreground">{release.sha256}</code></div>}
-                <p>If the hash matches and you trust the release, choose <strong className="font-medium">More info → Run anyway</strong>. Keep Windows protection enabled.</p>
+                {release?.sha256 && <div><p className="mb-1.5 text-xs">SHA-256 · {release.version}</p><code className="block break-all text-[13px] text-foreground">{release.sha256}</code></div>}
+                <p className="text-xs">Signed builds are on the way. Keep Windows protection enabled.</p>
               </div>
             </details>
             <Disclosure title="Install with PowerShell" className="border-t border-[#e3cebf] text-[#765f4c]"><CopyCommand /></Disclosure>
@@ -112,8 +113,10 @@ export default async function Home() {
         <footer className="flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
           <Brand footer />
           <p>By <a href="https://www.blocksdev.pro/" target="_blank" rel="noopener noreferrer" className="hover:text-primary">blocksdev</a></p>
-          {release && <a href={releaseUrl} title={`${release.version} downloads, checked ${release.checkedAt}`} className="hover:text-primary">{release.downloads.toLocaleString("en-US")} GitHub downloads</a>}
+          {release && <a href={executableUrl} title={`${release.version} downloads, checked ${release.checkedAt}`} className="hover:text-primary">{release.downloads.toLocaleString("en-US")} downloads</a>}
           <a href={`${repository}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer" className="hover:text-primary">MIT license</a>
+          <a href={changelogEndpoint} className="hover:text-primary">Changelog</a>
+          <a href="/privacy.html" className="hover:text-primary">Privacy</a>
           <p className="basis-full">Not affiliated with Riot Games or Valve.</p>
         </footer>
       </div>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { installCommand, repository } from "@/lib/site";
+import { installCommand, installPsEndpoint } from "@/lib/site";
 
 type CopyStatus = "idle" | "copied" | "manual";
 
@@ -42,7 +42,7 @@ export function CopyCommand() {
           {status === "copied" ? <Check /> : <Copy />}{status === "copied" ? "Copied" : "Copy"}
         </Button>
       </div>
-      <a className="text-sm text-[#aa4633] underline decoration-[#dca390] underline-offset-4 hover:decoration-current" href={`${repository}/blob/main/install.ps1`} target="_blank" rel="noopener noreferrer">Read the install script</a>
+      <a className="text-sm text-[#aa4633] underline decoration-[#dca390] underline-offset-4 hover:decoration-current" href={installPsEndpoint}>Read the install script</a>
       <p role="status" aria-live="polite" className="mt-2 min-h-5 text-xs text-[#765f4c]">{status === "copied" ? "Command copied." : status === "manual" ? "Command selected. Press Ctrl+C to copy." : ""}</p>
     </div>
   );
