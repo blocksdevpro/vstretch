@@ -780,7 +780,7 @@ mod tests {
         let mut terracotta = 0;
         let mut white = 0;
         let mut opaque = 0;
-        for chunk in PIXELS.chunks_exact(4) {
+        for chunk in PIXELS.as_chunks::<4>().0 {
             if chunk[3] > 128 {
                 opaque += 1;
             }
@@ -797,11 +797,11 @@ mod tests {
         assert!(opaque > 500, "tray should stay mostly opaque");
         // The old navy/teal tray must not come back.
         assert!(
-            !PIXELS.chunks_exact(4).any(|c| c == [22, 28, 42, 255]),
+            !PIXELS.as_chunks::<4>().0.contains(&[22, 28, 42, 255]),
             "tray still uses the old navy background"
         );
         assert!(
-            !PIXELS.chunks_exact(4).any(|c| c == [71, 222, 203, 255]),
+            !PIXELS.as_chunks::<4>().0.contains(&[71, 222, 203, 255]),
             "tray still uses the old teal V"
         );
         // The Rust asset and the website favicon must stay byte-identical.
