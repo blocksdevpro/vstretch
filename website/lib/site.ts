@@ -1,3 +1,9 @@
+export const siteUrl = "https://vstretch.blocksdev.pro";
 export const repository = "https://github.com/blocksdevpro/vstretch";
-export const downloadUrl = `${repository}/releases/latest/download/vstretch.exe`;
-export const installCommand = "irm https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 | iex";
+export const downloadEndpoint = "/download";
+export const downloadUrl = `${siteUrl}/download`;
+export const installPsEndpoint = "/install.ps1";
+export const installShEndpoint = "/install.sh";
+export const changelogEndpoint = "/changelog";
+export const installCommand = `irm ${siteUrl}/install.ps1 | iex`;
+export const installShCommand = `curl -fsSL ${siteUrl}/install.sh | sh`;

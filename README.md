@@ -14,7 +14,7 @@ Built for the classic loop:
 
 No Rust or terminal is required for the downloaded app:
 
-1. Download **`vstretch.exe`** from the [latest release](https://github.com/blocksdevpro/vstretch/releases/latest).
+1. Download **`vstretch.exe`** from [vstretch.blocksdev.pro/download](https://vstretch.blocksdev.pro/download).
 2. Keep it in a permanent folder, such as `C:\Tools\vstretch`.
 3. Double-click it. Vstretch appears in the system tray without opening a console window.
 4. Click its tray icon to open the menu. If Windows hides the icon, open the tray overflow with the arrow beside the clock.
@@ -22,7 +22,7 @@ No Rust or terminal is required for the downloaded app:
 To install with **Windows PowerShell** and add Vstretch to your user PATH, run:
 
 ```powershell
-irm https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 | iex
+irm https://vstretch.blocksdev.pro/install.ps1 | iex
 ```
 
 The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates a per-user Start Menu shortcut, and needs no admin rights. Search for **vstretch** in Start to open or reopen the tray app, or run `vstretch` from a terminal. Running the installer again also repairs the shortcut.
@@ -30,7 +30,7 @@ The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the
 For **Git Bash on Windows**, the equivalent command is:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.sh | sh
+curl -fsSL https://vstretch.blocksdev.pro/install.sh | sh
 ```
 
 The shell installer calls Windows PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
@@ -122,7 +122,7 @@ vstretch --update
 To install in a different folder without changing PATH, download and run the installer with options:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/blocksdevpro/vstretch/main/install.ps1 -OutFile install.ps1
+Invoke-WebRequest https://vstretch.blocksdev.pro/install.ps1 -OutFile install.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir C:\Tools\vstretch -NoPath
 ```
 
