@@ -455,24 +455,19 @@ pub fn run() -> Result<()> {
     app.restore_on_exit()
 }
 
-/// Small vector-like V drawn directly into pixels. No external image is needed
-/// at runtime, so the downloaded executable stays portable.
+/// Canonical terracotta V from `assets/icon.svg`, baked to 32x32 RGBA.
+///
+/// The bytes are generated from the same rounded-square + white V drawing as
+/// `assets/icon.ico`, then embedded with `include_bytes!` so the downloaded
+/// executable stays portable with no sidecar image file.
 fn tray_icon() -> Result<Icon> {
     const SIZE: u32 = 32;
-    let mut pixels = vec![0; (SIZE * SIZE * 4) as usize];
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let index = ((y * SIZE + x) * 4) as usize;
-            if (2..30).contains(&x) && (2..30).contains(&y) {
-                pixels[index..index + 4].copy_from_slice(&[22, 28, 42, 255]);
-                let arm = 7 + (y.saturating_sub(7) / 2);
-                if (7..25).contains(&y) && (x.abs_diff(arm) <= 2 || x.abs_diff(31 - arm) <= 2) {
-                    pixels[index..index + 4].copy_from_slice(&[71, 222, 203, 255]);
-                }
-            }
-        }
-    }
-    Icon::from_rgba(pixels, SIZE, SIZE).context("could not create tray icon image")
+    const PIXELS: &[u8] = include_bytes!("../assets/tray-icon-32.rgba");
+    anyhow::ensure!(
+        PIXELS.len() == (SIZE * SIZE * 4) as usize,
+        "tray icon pixels do not match {SIZE}x{SIZE} RGBA"
+    );
+    Icon::from_rgba(PIXELS.to_vec(), SIZE, SIZE).context("could not create tray icon image")
 }
 
 #[cfg(test)]
@@ -770,5 +765,55 @@ mod tests {
         menu.sync(&config, None, Some(native), Some(native));
         assert!(!menu.native.is_checked());
         assert!(!menu.stretch.is_checked());
+    }
+
+    #[test]
+    fn tray_icon_uses_the_canonical_terracotta_v() {
+        const SIZE: usize = 32;
+        const PIXELS: &[u8] = include_bytes!("../assets/tray-icon-32.rgba");
+        assert_eq!(PIXELS.len(), SIZE * SIZE * 4);
+        // Rounded corners stay transparent so the square reads as a rounded tile.
+        for (x, y) in [(0, 0), (31, 0), (0, 31), (31, 31)] {
+            let alpha = PIXELS[(y * SIZE + x) * 4 + 3];
+            assert_eq!(alpha, 0, "corner ({x},{y}) should stay transparent");
+        }
+        let mut terracotta = 0;
+        let mut white = 0;
+        let mut opaque = 0;
+        for chunk in PIXELS.chunks_exact(4) {
+            if chunk[3] > 128 {
+                opaque += 1;
+            }
+            if chunk[0] == 223 && chunk[1] == 117 && chunk[2] == 94 && chunk[3] == 255 {
+                terracotta += 1;
+            }
+            // Anti-aliased edges blend the V, so count near-white as the V.
+            if chunk[0] >= 240 && chunk[1] >= 240 && chunk[2] >= 240 && chunk[3] >= 200 {
+                white += 1;
+            }
+        }
+        assert!(terracotta > 100, "tray should keep the terracotta tile");
+        assert!(white > 50, "tray should keep the white V");
+        assert!(opaque > 500, "tray should stay mostly opaque");
+        // The old navy/teal tray must not come back.
+        assert!(
+            !PIXELS.chunks_exact(4).any(|c| c == [22, 28, 42, 255]),
+            "tray still uses the old navy background"
+        );
+        assert!(
+            !PIXELS.chunks_exact(4).any(|c| c == [71, 222, 203, 255]),
+            "tray still uses the old teal V"
+        );
+        // The Rust asset and the website favicon must stay byte-identical.
+        assert_eq!(
+            include_str!("../assets/icon.svg"),
+            include_str!("../website/app/icon.svg"),
+            "assets/icon.svg drifted from website/app/icon.svg"
+        );
+        assert!(
+            include_str!("../assets/icon.svg").contains("#df755e"),
+            "canonical icon lost its terracotta fill"
+        );
+        tray_icon().unwrap();
     }
 }

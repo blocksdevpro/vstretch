@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--version`, `--check-update`, and `--update` commands
 - PowerShell installer with a user PATH entry, plus a `curl ... | sh` entry point for Git Bash on Windows
 - Per-user Start Menu shortcut created and repaired by the installer, with `-NoShortcut` to opt out
+- Consistent terracotta V icon shared by the system tray, executable, installer shortcut, and website (`assets/icon.svg`, `assets/icon.ico`)
 
 ### Fixed
 - Keep stretch changes temporary so they do not become Windows' saved desktop mode after reboot

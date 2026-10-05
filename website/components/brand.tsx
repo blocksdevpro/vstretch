@@ -1,7 +1,14 @@
 import { cn } from "@/lib/utils";
 
 export function BrandMark({ small = false }: { small?: boolean }) {
-  return <span aria-hidden="true" className={cn("grid shrink-0 place-items-center bg-brand pr-0.5 font-bold italic tracking-[-0.08em] text-white", small ? "size-[22px] rounded-md text-lg" : "size-[30px] rounded-[9px] text-[25px]")}>v</span>;
+  return (
+    <span aria-hidden="true" className={cn("grid shrink-0 place-items-center", small ? "size-[22px]" : "size-[30px]")}>
+      <svg viewBox="0 0 48 48" className={cn("size-full", small ? "rounded-md" : "rounded-[9px]")}>
+        <rect width="48" height="48" rx="13" fill="#df755e" />
+        <path d="M11 14l9 20h7l10-20h-8l-5 12-5-12z" fill="white" />
+      </svg>
+    </span>
+  );
 }
 
 export function Brand({ footer = false }: { footer?: boolean }) {
