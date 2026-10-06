@@ -1,12 +1,14 @@
 # vstretch landing page
 
-A Next.js App Router site for Windows FPS players, with TypeScript, Tailwind CSS 4, and shadcn/ui components generated from the official registry. The landing page uses short copy, a consistent type scale, and an interactive preview. An unsigned-download notice and source and checksum links stay visible. Setup instructions, terminal usage, and FAQ answers open on demand.
+A Next.js App Router site for Windows FPS players, with TypeScript, Tailwind CSS 4, and shadcn/ui components generated from the official registry. The landing page uses short copy, a consistent type scale, and an interactive preview. A subtle verify-download helper with source and checksum links stays collapsed. Setup instructions, terminal usage, and FAQ answers open on demand.
 
 The page has a centered hero, crosshair preview, numbered step cards, and a two-column FAQ. The tray preview uses React state and shadcn Toggle Group and Select controls. Its grid and crosshair stretch horizontally when selected, without changing a visitor's display. In-game scaling varies. Tailwind handles the responsive layout and warm color theme. DM Sans is bundled by `next/font`. Body text is 16px, with secondary information in collapsed disclosures.
 
-The copy follows the current Rust app and the root `README.md`. At build time, `lib/release.ts` reads GitHub's latest stable release for its version, executable size, SHA-256, and actual asset download count. Download and source links are pinned to that release so the checksum matches. If GitHub is unavailable, the page links to the latest release without inventing metadata or counts. Rebuild after publishing a release to refresh the static metadata. The page distinguishes pre-v1.2.0 terminal releases from the upcoming tray features.
+The copy follows the current Rust app and the root `README.md`. At build time, `lib/release.ts` reads GitHub's latest stable release for its version, executable size, SHA-256, and actual asset download count. Source and checksum links are pinned to that release so the hash matches. If GitHub is unavailable, the page links to the latest release without inventing metadata or counts. Rebuild after publishing a release to refresh the static metadata. The page distinguishes pre-v1.2.0 terminal releases from tray releases.
 
-The current published executable is unsigned. Revisit the SmartScreen wording when signed releases are introduced. `devIndicators: false` hides Next.js's development indicator; static production exports do not ship that overlay.
+Retrieval uses same-domain endpoints: `/download` redirects to the pinned `vstretch.exe` asset, while `/install.ps1` and `/install.sh` serve the repository installers (`scripts/sync-site-assets.mjs` copies them to `public/` on `prebuild`). The install command is `irm https://vstretch.blocksdev.pro/install.ps1 | iex` and Git Bash uses `curl -fsSL https://vstretch.blocksdev.pro/install.sh | sh`. `/changelog` renders the root `CHANGELOG.md` at build time.
+
+The current published executable is unsigned and SignPath signing is in progress. The verify helper stays intentionally subtle until signed builds ship; flip it to a signed/publisher message once releases are signed. `devIndicators: false` hides Next.js's development indicator; static production exports do not ship that overlay.
 
 ## Develop
 
@@ -38,12 +40,15 @@ python -m http.server 4173 --bind 127.0.0.1 --directory out
 ## Structure
 
 - `app/page.tsx`: landing page copy and layout.
+- `app/download/page.tsx`: same-domain redirect to the pinned release asset.
+- `app/changelog/page.tsx`: release notes rendered from the root `CHANGELOG.md`.
 - `app/globals.css`: Tailwind theme and display illustration.
 - `components/tray-preview.tsx`: interactive tray preview.
 - `components/copy-command.tsx`: copyable PowerShell installer.
 - `components/ui`: shadcn component source.
-- `lib/site.ts`: shared download, repository, and installer links.
+- `lib/site.ts`: shared site endpoints, repository, and installer commands.
 - `lib/release.ts`: build-time GitHub release metadata and pinned asset links.
+- `scripts/sync-site-assets.mjs`: copies root installers to `public/` for `/install.ps1` and `/install.sh`.
 
 The proposed production address is `vstretch.blocksdev.pro`. See [DOMAIN-SETUP.md](DOMAIN-SETUP.md) for connection instructions.
 
