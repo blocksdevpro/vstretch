@@ -28,7 +28,7 @@ export function TrayPreview() {
     <div id="try-it" className="mx-auto mt-8 max-w-[750px] rounded-[18px] border bg-card px-3 pb-3 text-left shadow-[0_10px_30px_-16px_#2b31232e] sm:mt-10 sm:px-[18px] sm:pb-[18px]">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-0.5 py-4 text-xs text-muted-foreground">
         <span className="font-medium tracking-[0.06em]">ONE LITTLE TRAY ICON</span>
-        <span>Interactive preview · v1.2.0 upcoming</span>
+        <span>Interactive preview · v1.3.0</span>
       </div>
       <div className="grid gap-3 sm:grid-cols-[1fr_1.08fr] sm:gap-4">
         <div className="rounded-[11px] border bg-[#fcfcfa] px-2.5 py-3.5">
