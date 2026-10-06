@@ -63,9 +63,11 @@ Left-click or right-click the tray icon to open the menu:
 | **Mode → Native** | Apply the detected native resolution or your saved native override |
 | **Mode → Stretch** | Apply your saved stretch resolution |
 | **Presets** | Save a stretch preset; if stretch is active, apply the new preset immediately |
+| **Toggle (Ctrl+Alt+S)** | Toggle Native ↔ Stretch immediately; same as the global hotkey |
 | **Auto-stretch Valorant & CS2** | Apply stretch when a supported game gains focus; keep it active until the game exits |
 | **Restore desktop on Alt+Tab** | Opt in to restoring the desktop when the game loses focus and reapplying stretch when you return |
 | **Start with Windows** | Enable or disable launch at sign-in for your Windows account |
+| **Hotkey enabled** | Enable or disable the global toggle hotkey |
 | **Exit** | Close the tray app; restore an automatic display change that it still owns |
 
 The Mode checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
@@ -132,7 +134,9 @@ Close Vstretch before running the installer again. The in-app updater can replac
 
 ### Hotkey toggle
 
-One quiet command for PowerToys / AutoHotkey / etc.:
+Built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch from anywhere, even in-game. No PowerToys or AutoHotkey needed. The tray menu shows the current combo as **Toggle (Ctrl+Alt+S)**; use **Hotkey enabled** to turn it off. To change it, edit `hotkey` in `config.toml` (e.g. `Ctrl+Shift+F9`) while the tray runs — it re-registers automatically. Empty `hotkey` clears it. If the combo is invalid or already taken, the tray shows an actionable error and keeps running.
+
+One quiet command for PowerToys / AutoHotkey / etc. still works:
 
 ```powershell
 vstretch --auto
@@ -160,6 +164,8 @@ Set `VSTRETCH_CONFIG` to an absolute file path to use a separate configuration, 
 auto_stretch = true
 restore_on_alt_tab = false
 start_with_windows = true
+hotkey = "Ctrl+Alt+S"
+hotkey_enabled = true
 
 [stretch]
 width = 1440

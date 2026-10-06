@@ -148,6 +148,163 @@ fn validate_profile(profile: &Profile) -> Result<()> {
     Ok(())
 }
 
+/// Default global hotkey for Native ↔ Stretch toggle.
+pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+S";
+
+fn hotkey_default() -> String {
+    DEFAULT_HOTKEY.to_owned()
+}
+
+fn hotkey_enabled_default() -> bool {
+    true
+}
+
+/// Modifier bits matching Win32 `MOD_*` (`HOT_KEY_MODIFIERS`).
+pub const HOTKEY_MOD_ALT: u32 = 0x0001;
+pub const HOTKEY_MOD_CONTROL: u32 = 0x0002;
+pub const HOTKEY_MOD_SHIFT: u32 = 0x0004;
+pub const HOTKEY_MOD_WIN: u32 = 0x0008;
+
+/// Parses strings like `Ctrl+Alt+S` into `(modifiers, virtual-key code)`.
+///
+/// Modifiers (case-insensitive): `Ctrl`/`Control`, `Alt`, `Shift`,
+/// `Win`/`Windows`/`Super`/`Meta`. Exactly one main key is required:
+/// `A`–`Z`, `0`–`9`, `F1`–`F24`, `Space`, `Tab`, `Enter`, `Esc`/`Escape`,
+/// `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`,
+/// `Up`, `Down`, `Left`, `Right`. At least one modifier is required so a
+/// plain key is never hijacked globally. Empty strings are rejected here;
+/// callers treat empty as disabled.
+pub fn parse_hotkey(text: &str) -> Result<(u32, u32)> {
+    let trimmed = text.trim();
+    ensure!(
+        !trimmed.is_empty(),
+        "hotkey is empty (e.g. {DEFAULT_HOTKEY})"
+    );
+    let mut modifiers = 0u32;
+    let mut key: Option<u32> = None;
+    for raw in trimmed.split('+') {
+        let token = raw.trim();
+        ensure!(!token.is_empty(), "invalid hotkey '{text}': empty part");
+        let lower = token.to_ascii_lowercase();
+        let modifier = match lower.as_str() {
+            "ctrl" | "control" => Some(HOTKEY_MOD_CONTROL),
+            "alt" => Some(HOTKEY_MOD_ALT),
+            "shift" => Some(HOTKEY_MOD_SHIFT),
+            "win" | "windows" | "super" | "meta" => Some(HOTKEY_MOD_WIN),
+            _ => None,
+        };
+        if let Some(bit) = modifier {
+            modifiers |= bit;
+            continue;
+        }
+        let vk = key_to_vk(&lower)
+            .with_context(|| format!("invalid hotkey '{text}': unknown key '{token}'"))?;
+        if key.is_some() {
+            bail!("invalid hotkey '{text}': only one main key is supported");
+        }
+        key = Some(vk);
+    }
+    ensure!(
+        modifiers != 0,
+        "invalid hotkey '{text}': include at least one of Ctrl, Alt, Shift, Win"
+    );
+    let vk = key.context(format!(
+        "invalid hotkey '{text}': missing a main key (e.g. {DEFAULT_HOTKEY})"
+    ))?;
+    Ok((modifiers, vk))
+}
+
+fn key_to_vk(lower: &str) -> Result<u32> {
+    if lower.len() == 1 {
+        let c = lower.chars().next().unwrap_or_default();
+        if c.is_ascii_alphabetic() {
+            return Ok(c.to_ascii_uppercase() as u32);
+        }
+        if c.is_ascii_digit() {
+            return Ok(c as u32);
+        }
+        bail!("unsupported key '{lower}': use A-Z, 0-9, F1-F24, or a named key");
+    }
+    if let Some(number) = lower.strip_prefix('f')
+        && let Ok(n) = number.parse::<u32>()
+        && (1..=24).contains(&n)
+    {
+        return Ok(0x70 + n - 1);
+    }
+    let vk = match lower {
+        "space" => 0x20,
+        "tab" => 0x09,
+        "enter" | "return" => 0x0D,
+        "esc" | "escape" => 0x1B,
+        "backspace" => 0x08,
+        "delete" | "del" => 0x2E,
+        "insert" | "ins" => 0x2D,
+        "home" => 0x24,
+        "end" => 0x23,
+        "pageup" | "pgup" => 0x21,
+        "pagedown" | "pgdn" => 0x22,
+        "up" => 0x26,
+        "down" => 0x28,
+        "left" => 0x25,
+        "right" => 0x27,
+        _ => bail!("unsupported key '{lower}': use A-Z, 0-9, F1-F24, or a named key"),
+    };
+    Ok(vk)
+}
+
+/// Normalized `Ctrl+Alt+S` style label for menus and errors.
+pub fn canonical_hotkey(text: &str) -> Result<String> {
+    let (modifiers, vk) = parse_hotkey(text)?;
+    let mut parts = Vec::new();
+    if modifiers & HOTKEY_MOD_CONTROL != 0 {
+        parts.push("Ctrl");
+    }
+    if modifiers & HOTKEY_MOD_ALT != 0 {
+        parts.push("Alt");
+    }
+    if modifiers & HOTKEY_MOD_SHIFT != 0 {
+        parts.push("Shift");
+    }
+    if modifiers & HOTKEY_MOD_WIN != 0 {
+        parts.push("Win");
+    }
+    let key = if (0x41..=0x5A).contains(&vk) || (0x30..=0x39).contains(&vk) {
+        (vk as u8 as char).to_string()
+    } else if (0x70..=0x87).contains(&vk) {
+        format!("F{}", vk - 0x70 + 1)
+    } else {
+        match vk {
+            0x20 => "Space".into(),
+            0x09 => "Tab".into(),
+            0x0D => "Enter".into(),
+            0x1B => "Esc".into(),
+            0x08 => "Backspace".into(),
+            0x2E => "Delete".into(),
+            0x2D => "Insert".into(),
+            0x24 => "Home".into(),
+            0x23 => "End".into(),
+            0x21 => "PageUp".into(),
+            0x22 => "PageDown".into(),
+            0x26 => "Up".into(),
+            0x28 => "Down".into(),
+            0x25 => "Left".into(),
+            0x27 => "Right".into(),
+            _ => format!("VK{vk:#X}"),
+        }
+    };
+    parts.push(&key);
+    Ok(parts.join("+"))
+}
+
+fn validate_hotkey(hotkey: &str) -> Result<()> {
+    // Empty clears the hotkey; the tray treats it as disabled.
+    if hotkey.trim().is_empty() {
+        return Ok(());
+    }
+    parse_hotkey(hotkey)?;
+    Ok(())
+}
+
 /// Display profiles and preferences shared by the tray, CLI, and terminal UI.
 ///
 /// Path (Windows): `%APPDATA%\vstretch\config.toml`
@@ -163,6 +320,12 @@ pub struct Config {
     /// None until the tray applies the first-launch Windows startup default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_with_windows: Option<bool>,
+    /// Global hotkey text, e.g. `Ctrl+Alt+S`. Empty clears it.
+    #[serde(default = "hotkey_default")]
+    pub hotkey: String,
+    /// When false the tray unregisters the global hotkey but keeps the text.
+    #[serde(default = "hotkey_enabled_default")]
+    pub hotkey_enabled: bool,
 }
 
 fn auto_stretch_default() -> bool {
@@ -188,6 +351,8 @@ impl Default for Config {
             auto_stretch: auto_stretch_default(),
             restore_on_alt_tab: false,
             start_with_windows: None,
+            hotkey: hotkey_default(),
+            hotkey_enabled: hotkey_enabled_default(),
         }
     }
 }
@@ -208,6 +373,8 @@ impl From<LegacyConfig> for Config {
             auto_stretch: auto_stretch_default(),
             restore_on_alt_tab: false,
             start_with_windows: None,
+            hotkey: hotkey_default(),
+            hotkey_enabled: hotkey_enabled_default(),
         }
     }
 }
@@ -325,7 +492,13 @@ impl Config {
         if let Some(n) = &self.native {
             validate_profile(n).context("native")?;
         }
+        validate_hotkey(&self.hotkey).context("hotkey")?;
         Ok(())
+    }
+
+    /// Enables or disables the global hotkey and persists the choice.
+    pub fn set_hotkey_enabled(&mut self, enabled: bool) -> Result<()> {
+        self.update_and_save(|next| next.hotkey_enabled = enabled)
     }
 
     pub fn set_stretch(&mut self, width: u32, height: u32) -> Result<String> {
@@ -684,5 +857,100 @@ height = 1080
             ..Config::default()
         };
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn hotkey_defaults_to_ctrl_alt_s_and_enabled() {
+        let c = Config::default();
+        assert_eq!(c.hotkey, "Ctrl+Alt+S");
+        assert!(c.hotkey_enabled);
+        c.validate().unwrap();
+        let (mods, vk) = parse_hotkey(&c.hotkey).unwrap();
+        assert_eq!(mods, HOTKEY_MOD_CONTROL | HOTKEY_MOD_ALT);
+        assert_eq!(vk, u32::from(b'S'));
+        assert_eq!(canonical_hotkey("ctrl+alt+s").unwrap(), "Ctrl+Alt+S");
+    }
+
+    #[test]
+    fn hotkey_parsing_accepts_common_forms() {
+        assert_eq!(
+            parse_hotkey("Ctrl+Shift+F12").unwrap(),
+            (HOTKEY_MOD_CONTROL | HOTKEY_MOD_SHIFT, 0x7B)
+        );
+        assert_eq!(canonical_hotkey("alt+ctrl+s").unwrap(), "Ctrl+Alt+S");
+        assert_eq!(canonical_hotkey("Win+Alt+Space").unwrap(), "Alt+Win+Space");
+        // Canonical order is Ctrl, Alt, Shift, Win.
+        assert_eq!(
+            canonical_hotkey("Shift+Win+Ctrl+A").unwrap(),
+            "Ctrl+Shift+Win+A"
+        );
+        assert_eq!(parse_hotkey("ctrl+alt+1").unwrap().1, u32::from(b'1'));
+    }
+
+    #[test]
+    fn hotkey_parsing_rejects_invalid_combos() {
+        for invalid in [
+            "",
+            "   ",
+            "Ctrl+Alt",
+            "S",
+            "Ctrl+Alt+S+D",
+            "Ctrl+Foo+S",
+            "Ctrl++S",
+        ] {
+            assert!(parse_hotkey(invalid).is_err(), "{invalid}");
+        }
+        // Modifier-only and key-only combos must not hijack plain keys.
+        assert!(parse_hotkey("Ctrl").is_err());
+        assert!(parse_hotkey("A").is_err());
+    }
+
+    #[test]
+    fn hotkey_empty_clears_but_invalid_fails_validation() {
+        let cleared = Config {
+            hotkey: String::new(),
+            ..Config::default()
+        };
+        assert!(cleared.validate().is_ok());
+        let invalid = Config {
+            hotkey: "Ctrl+Alt".into(),
+            ..Config::default()
+        };
+        assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn old_config_without_hotkey_gets_defaults() {
+        let text = "[stretch]\nwidth = 1440\nheight = 1080\n";
+        let (c, migrated) = parse_config(text).unwrap();
+        assert!(!migrated);
+        assert_eq!(c.hotkey, "Ctrl+Alt+S");
+        assert!(c.hotkey_enabled);
+    }
+
+    #[test]
+    fn hotkey_round_trips_and_legacy_migrates_with_defaults() {
+        let c = Config {
+            hotkey: "Ctrl+Shift+F9".into(),
+            hotkey_enabled: false,
+            ..Config::default()
+        };
+        let text = toml::to_string_pretty(&c).unwrap();
+        assert!(text.contains("hotkey"));
+        let (loaded, migrated) = parse_config(&text).unwrap();
+        assert!(!migrated);
+        assert_eq!(loaded.hotkey, "Ctrl+Shift+F9");
+        assert!(!loaded.hotkey_enabled);
+
+        let legacy = r#"
+default_stretch_profile = "1440x1080"
+[profiles.1440x1080]
+width = 1440
+height = 1080
+"#;
+        let (migrated_config, migrated_flag) = parse_config(legacy).unwrap();
+        assert!(migrated_flag);
+        assert_eq!(migrated_config.hotkey, "Ctrl+Alt+S");
+        assert!(migrated_config.hotkey_enabled);
     }
 }

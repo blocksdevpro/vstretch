@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Built-in global hotkey `Ctrl+Alt+S` to toggle Native ↔ Stretch from anywhere, even in-game, with `Toggle (Ctrl+Alt+S)` and `Hotkey enabled` tray menu items
+- `hotkey` and `hotkey_enabled` settings in `config.toml` with validation, live re-register on change, actionable menu error on conflict, and unregister on Exit
+
 ## [1.2.0] - 2026-10-05
 
 ### Added
