@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-08
+
 ### Changed
 
 - Add colored installer steps, animated network loaders, download progress, and clear completion and failure messages, with plain output for logs
@@ -86,7 +88,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vstretch --auto` quiet toggle for hotkeys
 - Popular stretch presets and first-run config under `%APPDATA%\vstretch\config.toml`
 
-[Unreleased]: https://github.com/blocksdevpro/vstretch/compare/v1.3.0...develop
+[Unreleased]: https://github.com/blocksdevpro/vstretch/compare/v1.3.1...develop
+[1.3.1]: https://github.com/blocksdevpro/vstretch/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/blocksdevpro/vstretch/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/blocksdevpro/vstretch/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/blocksdevpro/vstretch/compare/v1.1.0...v1.1.1
