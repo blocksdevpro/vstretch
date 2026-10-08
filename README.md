@@ -58,19 +58,21 @@ vstretch
 
 Left-click or right-click the tray icon to open the menu:
 
+The header shows the installed app version and current display. Manual mode controls and stretch presets come first, followed by **Automatic switching**, **Settings**, and **Exit**. Windows aligns resolutions and shortcuts in the menu's right-hand column.
+
 | Menu item | Action |
 | --- | --- |
-| **Mode → Native** | Apply the detected native resolution or your saved native override |
-| **Mode → Stretch** | Apply your saved stretch resolution |
-| **Presets** | Save a stretch preset; if stretch is active, apply the new preset immediately |
-| **Toggle (Ctrl+Alt+S)** | Toggle Native ↔ Stretch immediately; same as the global hotkey |
-| **Auto-stretch Valorant & CS2** | Apply stretch when a supported game gains focus; keep it active until the game exits |
-| **Restore desktop on Alt+Tab** | Opt in to restoring the desktop when the game loses focus and reapplying stretch when you return |
-| **Start with Windows** | Enable or disable launch at sign-in for your Windows account |
-| **Hotkey enabled** | Enable or disable the global toggle hotkey |
+| **Toggle mode** | Toggle Native ↔ Stretch immediately; the global hotkey appears beside the action |
+| **Native** | Apply the detected native resolution or your saved native override |
+| **Stretch** | Apply your saved stretch resolution |
+| **Stretch presets** | Save a stretch preset; if stretch is active, apply the new preset immediately |
+| **Automatic switching → Auto-stretch Valorant & CS2** | Apply stretch when a supported game gains focus; keep it active until the game exits |
+| **Automatic switching → Restore desktop on Alt+Tab** | Opt in to restoring the desktop when the game loses focus and reapplying stretch when you return |
+| **Settings → Enable hotkey** | Enable or disable the global toggle hotkey |
+| **Settings → Start with Windows** | Enable or disable launch at sign-in for your Windows account |
 | **Exit** | Close the tray app; restore an automatic display change that it still owns |
 
-The Mode checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
+The Native and Stretch checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
 
 Auto-stretch is enabled by default. It detects `VALORANT-Win64-Shipping.exe` and `cs2.exe`, applies your preset when the game gains focus, and restores the previous desktop when you close the game. Alt+Tab leaves the resolution unchanged by default. Enable **Restore desktop on Alt+Tab** if you want focus-based switching. The option is off for new and existing configurations unless you enable it.
 
@@ -84,7 +86,7 @@ Errors appear in the tray menu and tooltip. Manual failures also open an error d
 
 Stretch switches are temporary and do not replace the saved Windows desktop mode used after reboot. If Vstretch crashes while it owns a display change, its next launch restores the previous desktop resolution, refresh rate, and reported scaling setting. Recovery runs only after the owning process has ended and the same monitor still has the recorded mode. Changes from another app or the user are left in place.
 
-An unfinished session is recorded in `%APPDATA%\vstretch\config.recovery.toml`, next to the configuration file. Clean Exit and successful hotkey commands clear their recovery record, preserving manual modes until you change them or reboot. If an older Vstretch version saved your current stretch preset as the Windows default, choose **Mode → Native** once with this version to repair that saved default.
+An unfinished session is recorded in `%APPDATA%\vstretch\config.recovery.toml`, next to the configuration file. Clean Exit and successful hotkey commands clear their recovery record, preserving manual modes until you change them or reboot. If an older Vstretch version saved your current stretch preset as the Windows default, choose **Native** once with this version to repair that saved default.
 
 ### Terminal interface
 
@@ -134,7 +136,7 @@ Close Vstretch before running the installer again. The in-app updater can replac
 
 ### Hotkey toggle
 
-Built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch from anywhere, even in-game. No PowerToys or AutoHotkey needed. The tray menu shows the current combo as **Toggle (Ctrl+Alt+S)**; use **Hotkey enabled** to turn it off. To change it, edit `hotkey` in `config.toml` (e.g. `Ctrl+Shift+F9`) while the tray runs — it re-registers automatically. Empty `hotkey` clears it. If the combo is invalid or already taken, the tray shows an actionable error and keeps running.
+Built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch from anywhere, even in-game. No PowerToys or AutoHotkey needed. The tray menu shows the current combo beside **Toggle mode**; use **Settings → Enable hotkey** to turn it off. To change it, edit `hotkey` in `config.toml` (e.g. `Ctrl+Shift+F9`) while the tray runs — it re-registers automatically. Empty `hotkey` clears it. If the combo is invalid or already taken, the tray shows an actionable error and keeps running.
 
 One quiet command for PowerToys / AutoHotkey / etc. still works:
 
