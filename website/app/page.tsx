@@ -42,7 +42,7 @@ export default async function Home() {
   return (
     <>
       <a href="#main" className="absolute -top-24 left-5 z-50 rounded-lg bg-card p-3 focus:top-3">Skip to content</a>
-      <div className="mx-auto max-w-[1040px] px-[17px] min-[380px]:px-[23px] md:px-10">
+      <div className="mx-auto flex min-h-dvh max-w-[1040px] flex-col px-[17px] min-[380px]:px-[23px] md:px-10">
         <header className="flex min-h-[83px] items-center justify-between gap-5 md:min-h-[100px]">
           <Brand />
           <nav aria-label="Main navigation" className="flex items-center gap-[18px] text-sm font-medium text-[#595e58] md:gap-7">
@@ -110,7 +110,7 @@ export default async function Home() {
           </section>
         </main>
 
-        <footer className="flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
+        <footer className="mt-auto flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
           <Brand footer />
           <p>By <a href="https://www.blocksdev.pro/" target="_blank" rel="noopener noreferrer" className="hover:text-primary">blocksdev</a></p>
           {release && <a href={executableUrl} title={`${release.version} downloads, checked ${release.checkedAt}`} className="hover:text-primary">{release.downloads.toLocaleString("en-US")} downloads</a>}

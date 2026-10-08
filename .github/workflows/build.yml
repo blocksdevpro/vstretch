@@ -20,6 +20,15 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Unit tests
         run: cargo test --locked
+      - name: Windows installer integration
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/install.Tests.ps1
+      - name: Windows installer progress and HTTP
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests/install-ui.Tests.ps1
+      - name: Git Bash installer
+        shell: bash
+        run: |
+          sh -n install.sh
+          bash tests/install-sh.Tests.sh
       - name: Lints
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: Release build

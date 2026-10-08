@@ -54,7 +54,7 @@ export default async function Changelog() {
   const releases = await getChangelog();
 
   return (
-    <div className="mx-auto max-w-[1040px] px-[17px] min-[380px]:px-[23px] md:px-10">
+    <div className="mx-auto flex min-h-dvh max-w-[1040px] flex-col px-[17px] min-[380px]:px-[23px] md:px-10">
       <header className="flex min-h-[83px] items-center justify-between gap-5 md:min-h-[100px]">
         <Brand />
         <nav aria-label="Main navigation" className="flex items-center gap-[18px] text-sm font-medium text-[#595e58] md:gap-7">
@@ -64,7 +64,7 @@ export default async function Changelog() {
         </nav>
       </header>
 
-      <main id="main" className="mx-auto max-w-[68ch] pb-[47px] pt-[31px] md:pt-[47px]">
+      <main id="main" className="mx-auto w-full max-w-[68ch] pb-[47px] pt-[31px] md:pt-[47px]">
         <h1 className="mb-2 text-[clamp(1.65rem,3vw,2rem)] font-medium leading-[1.3] tracking-[-0.035em]">Changelog.</h1>
         <p className="mb-7 text-base leading-relaxed text-muted-foreground">New in each release. Full history lives in <a href={`${repository}/blob/main/CHANGELOG.md`} target="_blank" rel="noopener noreferrer" className="text-[#aa4633] underline decoration-[#dca390] underline-offset-4 hover:decoration-current">CHANGELOG.md</a>.</p>
 
@@ -92,7 +92,7 @@ export default async function Changelog() {
         </div>
       </main>
 
-      <footer className="flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
+      <footer className="mt-auto flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
         <Brand footer />
         <a href="/download" className="hover:text-primary">Download</a>
         <a href="/privacy.html" className="hover:text-primary">Privacy</a>

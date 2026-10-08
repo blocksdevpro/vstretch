@@ -29,6 +29,7 @@ use crate::{
 
 /// Thread-wide hotkey id for the Native ↔ Stretch toggle.
 const HOTKEY_ID: i32 = 1;
+const APP_LABEL: &str = concat!("Vstretch v", env!("CARGO_PKG_VERSION"));
 
 enum Command {
     Native,
@@ -45,11 +46,11 @@ enum Command {
 fn toggle_label(config: &Config) -> String {
     if config.hotkey_enabled && !config.hotkey.trim().is_empty() {
         match crate::config::canonical_hotkey(&config.hotkey) {
-            Ok(canonical) => format!("Toggle ({canonical})"),
-            Err(_) => format!("Toggle ({})", config.hotkey.trim()),
+            Ok(canonical) => format!("Toggle mode\t{canonical}"),
+            Err(_) => format!("Toggle mode\t{}", config.hotkey.trim()),
         }
     } else {
-        "Toggle (hotkey off)".to_owned()
+        "Toggle mode".to_owned()
     }
 }
 
@@ -136,17 +137,16 @@ struct TrayMenu {
 impl TrayMenu {
     fn new(config: &Config) -> Result<Self> {
         let root = Menu::new();
+        let version = MenuItem::new(APP_LABEL, false, None);
         let status = MenuItem::new("Vstretch", false, None);
-        let mode_menu = Submenu::new("Mode", true);
         let native = CheckMenuItem::new("Native", true, false, None);
         let stretch = CheckMenuItem::new("Stretch", true, false, None);
-        mode_menu.append_items(&[&native, &stretch])?;
-        let presets_menu = Submenu::new("Presets", true);
+        let presets_menu = Submenu::new("Stretch presets", true);
         let mut presets = Vec::new();
         for preset in POPULAR_STRETCH {
             let profile = Profile::new(preset.width, preset.height);
             let item = CheckMenuItem::new(
-                format!("{} x {}   {}", preset.width, preset.height, preset.aspect),
+                format!("{} × {}\t{}", preset.width, preset.height, preset.aspect),
                 true,
                 false,
                 None,
@@ -159,7 +159,13 @@ impl TrayMenu {
             .any(|(p, _)| p.width == config.stretch.width && p.height == config.stretch.height)
         {
             let profile = config.stretch.clone();
-            let item = CheckMenuItem::new(format!("{}   Saved", profile.name()), true, false, None);
+            presets_menu.append(&PredefinedMenuItem::separator())?;
+            let item = CheckMenuItem::new(
+                format!("{} × {}\tCustom", profile.width, profile.height),
+                true,
+                false,
+                None,
+            );
             presets_menu.append(&item)?;
             presets.push((profile, item));
         }
@@ -177,20 +183,27 @@ impl TrayMenu {
             None,
         );
         let startup = CheckMenuItem::new("Start with Windows", true, false, None);
-        let hotkey_enabled =
-            CheckMenuItem::new("Hotkey enabled", true, config.hotkey_enabled, None);
+        let hotkey_enabled = CheckMenuItem::new("Enable hotkey", true, config.hotkey_enabled, None);
+        let automatic_menu = Submenu::new("Automatic switching", true);
+        automatic_menu.append_items(&[&auto, &restore_on_alt_tab])?;
+        let settings_menu = Submenu::new("Settings", true);
+        settings_menu.append_items(&[
+            &hotkey_enabled,
+            &PredefinedMenuItem::separator(),
+            &startup,
+        ])?;
         let exit = MenuItem::new("Exit", true, None);
         root.append_items(&[
+            &version,
             &status,
             &PredefinedMenuItem::separator(),
-            &mode_menu,
+            &toggle,
+            &native,
+            &stretch,
             &presets_menu,
             &PredefinedMenuItem::separator(),
-            &toggle,
-            &auto,
-            &restore_on_alt_tab,
-            &startup,
-            &hotkey_enabled,
+            &automatic_menu,
+            &settings_menu,
             &PredefinedMenuItem::separator(),
             &exit,
         ])?;
@@ -244,13 +257,13 @@ impl TrayMenu {
         let kind = display::classify_mode(current, native, panel, Some(&config.stretch));
         self.native.set_text(
             native
-                .map(|n| format!("Native ({} x {})", n.width, n.height))
-                .unwrap_or_else(|| "Native (unavailable)".into()),
+                .map(|n| format!("Native\t{} × {}", n.width, n.height))
+                .unwrap_or_else(|| "Native\tUnavailable".into()),
         );
         self.native.set_enabled(native.is_some());
         self.native.set_checked(kind == ModeKind::Native);
         self.stretch.set_text(format!(
-            "Stretch ({} x {})",
+            "Stretch\t{} × {}",
             config.stretch.width, config.stretch.height
         ));
         // Automatic sessions and manual stretch both need a known restore target.
@@ -266,6 +279,11 @@ impl TrayMenu {
         self.restore_on_alt_tab
             .set_checked(config.restore_on_alt_tab);
         self.hotkey_enabled.set_checked(config.hotkey_enabled);
+        self.hotkey_enabled.set_text(
+            crate::config::canonical_hotkey(&config.hotkey)
+                .map(|hotkey| format!("Enable hotkey\t{hotkey}"))
+                .unwrap_or_else(|_| "Enable hotkey".into()),
+        );
     }
 }
 
@@ -289,7 +307,7 @@ impl App {
         let menu = TrayMenu::new(&config)?;
         let icon = TrayIconBuilder::new()
             .with_icon(tray_icon()?)
-            .with_tooltip("Vstretch | Right-click for display modes")
+            .with_tooltip(format!("{APP_LABEL} | Right-click for display modes"))
             .with_menu(Box::new(menu.root.clone()))
             .with_menu_on_left_click(true)
             .build()
@@ -357,7 +375,12 @@ impl App {
             }
             if problems.is_empty() {
                 self.current
-                    .map(|mode| format!("Current: {}", mode.label()))
+                    .map(|mode| {
+                        format!(
+                            "Current display\t{} × {} @ {} Hz",
+                            mode.width, mode.height, mode.refresh
+                        )
+                    })
                     .unwrap_or_else(|| "Current display unavailable".into())
             } else {
                 problems.join(" | ")
@@ -371,8 +394,12 @@ impl App {
                 .replace('&', "&&"),
         );
         let _ = self.icon.set_tooltip(Some(format!(
-            "Vstretch | {}",
-            status.chars().take(100).collect::<String>()
+            "{APP_LABEL} | {}",
+            status
+                .chars()
+                .take(100)
+                .collect::<String>()
+                .replace('\t', ": ")
         )));
     }
 
@@ -542,10 +569,11 @@ impl Drop for Timer {
     }
 }
 
-pub fn run() -> Result<()> {
+pub fn run() -> Result<Option<std::path::PathBuf>> {
     let Some(_instance) = platform::tray_instance(&Config::config_path()?)? else {
-        return Ok(());
+        return Ok(None);
     };
+    let executable = crate::update::ExecutableWatch::new(std::env::current_exe()?)?;
     let mut app = App::new()?;
     let timer = Timer::new()?;
     let mut message = MSG::default();
@@ -573,7 +601,7 @@ pub fn run() -> Result<()> {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if let Some(command) = app.menu.command(event.id()) {
                 match app.handle(command) {
-                    Ok(true) => return Ok(()),
+                    Ok(true) => return Ok(None),
                     Ok(false) => {}
                     Err(error) => {
                         app.error = Some(format!("{error:#}"));
@@ -590,7 +618,7 @@ pub fn run() -> Result<()> {
         while TrayIconEvent::receiver().try_recv().is_ok() {}
         if message.message == WM_HOTKEY && message.wParam.0 == HOTKEY_ID as usize {
             match app.handle(Command::Toggle) {
-                Ok(true) => return Ok(()),
+                Ok(true) => return Ok(None),
                 Ok(false) => {}
                 Err(error) => {
                     app.error = Some(format!("{error:#}"));
@@ -603,10 +631,17 @@ pub fn run() -> Result<()> {
             app.sync_menu();
         }
         if message.message == WM_TIMER && message.hwnd.is_invalid() && message.wParam.0 == timer.0 {
+            if executable.changed() {
+                // Restore first; the caller releases tray/hotkey ownership and
+                // finishes the recovery journal before starting the new image.
+                app.restore_on_exit()?;
+                return Ok(Some(executable.path));
+            }
             app.tick();
         }
     }
-    app.restore_on_exit()
+    app.restore_on_exit()?;
+    Ok(None)
 }
 
 /// Canonical terracotta V from `assets/icon.svg`, baked to 32x32 RGBA.
@@ -627,6 +662,17 @@ fn tray_icon() -> Result<Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tray_icon::menu::ContextMenu;
+    use windows::Win32::UI::WindowsAndMessaging::{GetMenuStringW, HMENU, MF_BYPOSITION};
+
+    // Muda's text() omits everything after the tab. Read the native caption to
+    // verify the shortcut and resolution columns Windows actually displays.
+    fn menu_caption(menu: HMENU, position: u32) -> String {
+        let mut buffer = [0u16; 256];
+        // SAFETY: the menu is owned by the test and the output buffer is writable.
+        let length = unsafe { GetMenuStringW(menu, position, Some(&mut buffer), MF_BYPOSITION) };
+        String::from_utf16_lossy(&buffer[..length as usize])
+    }
 
     #[test]
     #[ignore = "temporarily switches the real primary display; requires isolated VSTRETCH_CONFIG and restores the original mode"]
@@ -814,11 +860,21 @@ mod tests {
         );
         let hwnd = HWND(app.icon.window_handle());
         let root = HMENU(app.menu.root.hpopupmenu() as _);
+        let items = app.menu.root.items();
+        anyhow::ensure!(items.len() == 12, "tray menu grouping changed");
+        let header = items[0]
+            .as_menuitem()
+            .context("app version header is missing")?;
+        anyhow::ensure!(
+            header.text() == format!("Vstretch v{}", env!("CARGO_PKG_VERSION"))
+                && !header.is_enabled(),
+            "header did not show the installed app version"
+        );
         anyhow::ensure!(
             !app.menu.restore_on_alt_tab.is_checked(),
             "Alt+Tab checkbox was checked by default"
         );
-        let toggle_id = unsafe { GetMenuItemID(root, 5) };
+        let toggle_id = unsafe { GetMenuItemID(root, 3) };
         unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(toggle_id as usize)), None) };
         let event = MenuEvent::receiver()
             .try_recv()
@@ -834,11 +890,28 @@ mod tests {
         // Toggle would change the display; mapping is enough for this save-only test.
         app.sync_menu();
         anyhow::ensure!(
-            app.menu.toggle.text().contains("Ctrl+Alt+S"),
+            menu_caption(root, 3) == "Toggle mode\tCtrl+Alt+S",
             "toggle menu did not show the hotkey"
         );
 
-        let auto_id = unsafe { GetMenuItemID(root, 6) };
+        let settings = unsafe { GetSubMenu(root, 9) };
+        anyhow::ensure!(!settings.is_invalid(), "Settings submenu is missing");
+        let startup_id = unsafe { GetMenuItemID(settings, 2) };
+        unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(startup_id as usize)), None) };
+        let event = MenuEvent::receiver()
+            .try_recv()
+            .context("no native startup menu event")?;
+        anyhow::ensure!(
+            matches!(app.menu.command(event.id()), Some(Command::Startup)),
+            "startup menu event did not map to a command"
+        );
+        // Check the startup command without changing the user's sign-in settings.
+        let automatic = unsafe { GetSubMenu(root, 8) };
+        anyhow::ensure!(
+            !automatic.is_invalid(),
+            "Automatic switching submenu is missing"
+        );
+        let auto_id = unsafe { GetMenuItemID(automatic, 0) };
         unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(auto_id as usize)), None) };
         let event = MenuEvent::receiver()
             .try_recv()
@@ -854,7 +927,7 @@ mod tests {
             "auto-stretch preference did not reach config and menu"
         );
 
-        let alt_tab_id = unsafe { GetMenuItemID(root, 7) };
+        let alt_tab_id = unsafe { GetMenuItemID(automatic, 1) };
         for expected in [true, false] {
             unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(alt_tab_id as usize)), None) };
             let event = MenuEvent::receiver()
@@ -877,7 +950,7 @@ mod tests {
             );
         }
 
-        let presets = unsafe { GetSubMenu(root, 3) };
+        let presets = unsafe { GetSubMenu(root, 6) };
         let preset_id = unsafe { GetMenuItemID(presets, 0) };
         unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(preset_id as usize)), None) };
         let event = MenuEvent::receiver()
@@ -894,7 +967,7 @@ mod tests {
             "preset did not reach config and menu"
         );
 
-        let hotkey_id = unsafe { GetMenuItemID(root, 9) };
+        let hotkey_id = unsafe { GetMenuItemID(settings, 0) };
         unsafe { SendMessageW(hwnd, WM_COMMAND, Some(WPARAM(hotkey_id as usize)), None) };
         let event = MenuEvent::receiver()
             .try_recv()
@@ -978,7 +1051,8 @@ mod tests {
     fn toggle_menu_shows_hotkey_and_enable_tracks_config() {
         let config = Config::default();
         let menu = TrayMenu::new(&config).unwrap();
-        assert!(menu.toggle.text().contains("Ctrl+Alt+S"));
+        let root = HMENU(menu.root.hpopupmenu() as _);
+        assert_eq!(menu_caption(root, 3), "Toggle mode\tCtrl+Alt+S");
         assert!(menu.hotkey_enabled.is_checked());
         assert!(matches!(
             menu.command(menu.toggle.id()),
@@ -995,15 +1069,15 @@ mod tests {
         };
         menu.sync(&disabled, None, None, None);
         assert!(!menu.hotkey_enabled.is_checked());
-        assert!(menu.toggle.text().contains("hotkey off"));
-        assert_eq!(toggle_label(&disabled), "Toggle (hotkey off)");
+        assert_eq!(menu.toggle.text(), "Toggle mode");
+        assert_eq!(toggle_label(&disabled), "Toggle mode");
 
         let custom = Config {
             hotkey: "Ctrl+Shift+F9".into(),
             ..Config::default()
         };
         menu.sync(&custom, None, None, None);
-        assert!(menu.toggle.text().contains("Ctrl+Shift+F9"));
+        assert_eq!(menu_caption(root, 3), "Toggle mode\tCtrl+Shift+F9");
     }
 
     #[test]

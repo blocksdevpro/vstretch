@@ -4,6 +4,8 @@
 
 vstretch is a Windows tray app for FPS players who use stretched resolutions in Valorant and CS2. Double-click the executable, then use its tray menu to switch between stretch and your native desktop resolution.
 
+This README describes the current source checkout. See the [changelog](CHANGELOG.md) for released changes and updates under **Unreleased**.
+
 Built for the classic loop:
 
 1. **Stretch** — lower res, wider models, the competitive look
@@ -25,7 +27,7 @@ To install with **Windows PowerShell** and add Vstretch to your user PATH, run:
 irm https://vstretch.blocksdev.pro/install.ps1 | iex
 ```
 
-The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates a per-user Start Menu shortcut, and needs no admin rights. Search for **vstretch** in Start to open or reopen the tray app, or run `vstretch` from a terminal. Running the installer again also repairs the shortcut.
+The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates per-user desktop and Start Menu shortcuts, and needs no admin rights. Open the desktop shortcut, search for **vstretch** in Start, or run `vstretch` from a terminal. Running the installer again repairs both shortcuts and repoints an existing Windows startup entry to the installation folder, while keeping startup disabled if you turned it off.
 
 For **Git Bash on Windows**, the equivalent command is:
 
@@ -33,17 +35,19 @@ For **Git Bash on Windows**, the equivalent command is:
 curl -fsSL https://vstretch.blocksdev.pro/install.sh | sh
 ```
 
-The shell installer calls Windows PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
+The shell installer shows progress while fetching the installer, tries a GitHub mirror if needed, then opens the same PowerShell installer UI. Installer options, including `-NoProgress`, pass through to PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
 
 Optional: add that folder to your PATH if you want `vstretch` / `vstretch -a` from anywhere (handy for hotkeys).
 
 <details>
 <summary>Build from source (Rust)</summary>
 
+Build on Windows with the MSVC toolchain and Visual Studio C++ build tools. Local builds and CI use Rust 1.99, pinned in `rust-toolchain.toml`.
+
 ```powershell
-cargo install --git https://github.com/blocksdevpro/vstretch.git
+cargo install --locked --git https://github.com/blocksdevpro/vstretch.git
 # or from a local clone:
-cargo install --path .
+cargo install --locked --path .
 ```
 
 </details>
@@ -58,19 +62,23 @@ vstretch
 
 Left-click or right-click the tray icon to open the menu:
 
+The header shows the installed app version and current display. Manual mode controls and stretch presets come first, followed by **Automatic switching**, **Settings**, and **Exit**. Windows aligns resolutions and shortcuts in the menu's right-hand column.
+
 | Menu item | Action |
 | --- | --- |
-| **Mode → Native** | Apply the detected native resolution or your saved native override |
-| **Mode → Stretch** | Apply your saved stretch resolution |
-| **Presets** | Save a stretch preset; if stretch is active, apply the new preset immediately |
-| **Toggle (Ctrl+Alt+S)** | Toggle Native ↔ Stretch immediately; same as the global hotkey |
-| **Auto-stretch Valorant & CS2** | Apply stretch when a supported game gains focus; keep it active until the game exits |
-| **Restore desktop on Alt+Tab** | Opt in to restoring the desktop when the game loses focus and reapplying stretch when you return |
-| **Start with Windows** | Enable or disable launch at sign-in for your Windows account |
-| **Hotkey enabled** | Enable or disable the global toggle hotkey |
+| **Toggle mode** | Toggle Native ↔ Stretch immediately; the global hotkey appears beside the action |
+| **Native** | Apply the detected native resolution or your saved native override |
+| **Stretch** | Apply your saved stretch resolution |
+| **Stretch presets** | Save a stretch preset; if stretch is active, apply the new preset immediately |
+| **Automatic switching → Auto-stretch Valorant & CS2** | Apply stretch when a supported game gains focus; keep it active until the game exits |
+| **Automatic switching → Restore desktop on Alt+Tab** | Opt in to restoring the desktop when the game loses focus and reapplying stretch when you return |
+| **Settings → Enable hotkey** | Enable or disable the global toggle hotkey |
+| **Settings → Start with Windows** | Enable or disable launch at sign-in for your Windows account |
 | **Exit** | Close the tray app; restore an automatic display change that it still owns |
 
-The Mode checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
+The Native and Stretch checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
+
+**Stretch presets** lists built-in resolutions with their aspect ratios. A saved resolution outside that list appears as **Custom**. If Vstretch cannot resolve a native target, **Native** shows **Unavailable**, and both **Native** and **Stretch** are disabled. Set a native override through the TUI to supply a restore target.
 
 Auto-stretch is enabled by default. It detects `VALORANT-Win64-Shipping.exe` and `cs2.exe`, applies your preset when the game gains focus, and restores the previous desktop when you close the game. Alt+Tab leaves the resolution unchanged by default. Enable **Restore desktop on Alt+Tab** if you want focus-based switching. The option is off for new and existing configurations unless you enable it.
 
@@ -84,7 +92,7 @@ Errors appear in the tray menu and tooltip. Manual failures also open an error d
 
 Stretch switches are temporary and do not replace the saved Windows desktop mode used after reboot. If Vstretch crashes while it owns a display change, its next launch restores the previous desktop resolution, refresh rate, and reported scaling setting. Recovery runs only after the owning process has ended and the same monitor still has the recorded mode. Changes from another app or the user are left in place.
 
-An unfinished session is recorded in `%APPDATA%\vstretch\config.recovery.toml`, next to the configuration file. Clean Exit and successful hotkey commands clear their recovery record, preserving manual modes until you change them or reboot. If an older Vstretch version saved your current stretch preset as the Windows default, choose **Mode → Native** once with this version to repair that saved default.
+An unfinished session is recorded in `%APPDATA%\vstretch\config.recovery.toml`, next to the configuration file. Clean Exit and successful hotkey commands clear their recovery record, preserving manual modes until you change them or reboot. If an older Vstretch version saved your current stretch preset as the Windows default, choose **Native** once with this version to repair that saved default.
 
 ### Terminal interface
 
@@ -111,7 +119,7 @@ The terminal interface includes mode switching and pickers for default stretch a
 
 The terminal interface checks GitHub for a newer stable release in the background when you open it with `--tui`. An update banner appears when a new version is available. Press `u`, then `Enter` to download and install it, or `Esc` to keep using your current version. Quit and reopen Vstretch after installation.
 
-Updates replace the executable in its current folder and preserve your display config. The download must match the release's SHA-256 digest before replacement. Offline checks show a retry message and keep the TUI usable. The hotkey command `--auto` skips update checks.
+Updates replace the executable in its current folder and preserve your display config. They refresh existing desktop and Start Menu shortcuts that point to that executable and notify Windows to reload their icons. Portable copies do not create shortcuts or take over another installation's startup entry. A running tray restores any desktop mode it owns, releases its icon and hotkey, and restarts with the updated executable after installation finishes. The TUI still needs to be closed and reopened. The download must match the release's SHA-256 digest before replacement. Offline checks show a retry message and keep the TUI usable. The hotkey command `--auto` skips update checks.
 
 You can also check or update from a terminal:
 
@@ -128,15 +136,19 @@ Invoke-WebRequest https://vstretch.blocksdev.pro/install.ps1 -OutFile install.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir C:\Tools\vstretch -NoPath
 ```
 
-`-NoPath` still creates the Start Menu shortcut. Add `-NoShortcut` to skip it.
+`-NoPath` still creates desktop and Start Menu shortcuts. Add `-NoDesktopShortcut` to create only the Start Menu shortcut, or `-NoShortcut` to skip both.
 
-Close Vstretch before running the installer again. The in-app updater can replace its own running executable.
+The PowerShell installer shows colored steps, an animated loader, and download progress. Add `-NoProgress` for ordinary log lines, or set `NO_COLOR` to disable colors. Redirected output uses plain lines automatically.
+
+The installer and in-app updater can replace a running executable and reject overlapping installations. Automatic tray restart applies to builds containing this behavior; close and reopen older releases after updating. Windows may keep a locked installer backup until the old process exits; the next installer run cleans it up.
 
 ### Hotkey toggle
 
-Built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch from anywhere, even in-game. No PowerToys or AutoHotkey needed. The tray menu shows the current combo as **Toggle (Ctrl+Alt+S)**; use **Hotkey enabled** to turn it off. To change it, edit `hotkey` in `config.toml` (e.g. `Ctrl+Shift+F9`) while the tray runs — it re-registers automatically. Empty `hotkey` clears it. If the combo is invalid or already taken, the tray shows an actionable error and keeps running.
+The built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch while the tray app runs, including in-game. The tray menu shows the current combo beside **Toggle mode** and **Settings → Enable hotkey**. Disabling it preserves your saved combo.
 
-One quiet command for PowerToys / AutoHotkey / etc. still works:
+To change it, edit `hotkey` in `config.toml`, for example to `Ctrl+Shift+F9`. The tray re-registers it automatically. Set `hotkey = ""` to clear it. If Windows cannot register the combo because another app uses it, the tray shows an error and keeps running. Invalid config edits show a reload error and leave the last valid configuration active.
+
+For a PowerToys or AutoHotkey binding, use the quiet command below. Run `vstretch` or `vstretch --tui` once first to create the configuration. The tray does not need to stay open for this command.
 
 ```powershell
 vstretch --auto
@@ -154,9 +166,11 @@ Created automatically on first launch at:
 
 Choose a stretch preset in the tray menu. Use `vstretch --tui` to set a custom native resolution under **Change default native…**.
 
-Native is auto-detected from the panel unless `[native]` is set. Stretch uses panel refresh unless `refresh` is set on `[stretch]`.
+The default stretch resolution is 1440×1080. Native is auto-detected from the panel unless `[native]` is set. Stretch uses panel refresh unless `refresh` is set on `[stretch]`. If a native override omits `refresh`, it uses panel Hz, falling back to 60 Hz when panel detection fails.
 
 Set `VSTRETCH_CONFIG` to an absolute file path to use a separate configuration, such as for portable use or development checks.
+
+Default configuration after the first tray launch:
 
 ```toml
 # vstretch — omit [native] to auto-detect the panel
@@ -170,7 +184,11 @@ hotkey_enabled = true
 [stretch]
 width = 1440
 height = 1080
+```
 
+To override native detection, add this section with your desktop's dimensions and refresh rate:
+
+```toml
 [native]
 width = 2560
 height = 1440
@@ -188,13 +206,23 @@ refresh = 180
 
 ## Development checks
 
+See [Project functions and execution flows](FUNCTIONS.md) for the user actions, execution trees, diagrams, and core function reference.
+
 ```powershell
 cargo fmt --all -- --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo build --release --locked
+.\target\release\vstretch.exe --version
 ```
 
+CI runs these checks on Windows for pushes and pull requests targeting `main` and `develop`. For the landing page's separate build and checks, see the [website README](website/README.md).
+
 Display-switching, Windows shell, and startup integration tests are ignored by default. Run them individually with `cargo test <test-name> -- --ignored --exact --nocapture`; tray integration tests require `VSTRETCH_CONFIG` set to an isolated absolute config path. Real display and startup tests temporarily change those Windows settings and restore them afterward.
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/install.Tests.ps1` for offline installer checks using isolated shortcuts and a temporary registry key. After building, add `-TrayExecutable target/debug/vstretch.exe` to verify replacement and automatic restart of a real tray with automatic display switching and startup disabled. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/install-ui.Tests.ps1` to check animated and plain output, slow downloads, and HTTP errors against a local server.
+
+Run `bash tests/install-sh.Tests.sh` in Git Bash for offline bootstrap checks covering mirror fallback, argument forwarding, failure messages, and temporary-file cleanup.
 
 ## License
 
