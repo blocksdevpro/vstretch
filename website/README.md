@@ -4,7 +4,7 @@ A Next.js App Router site for Windows FPS players, with TypeScript, Tailwind CSS
 
 The page has a centered hero, crosshair preview, numbered step cards, and a two-column FAQ. The tray preview uses React state and shadcn Toggle Group and Select controls. Its grid and crosshair stretch horizontally when selected, without changing a visitor's display. In-game scaling varies. Tailwind handles the responsive layout and warm color theme. DM Sans is bundled by `next/font`. Body text is 16px, with secondary information in collapsed disclosures.
 
-The copy follows the current Rust app and the root `README.md`. At build time, `lib/release.ts` reads GitHub's latest stable release for its version, executable size, SHA-256, and actual asset download count. Source and checksum links are pinned to that release so the hash matches. If GitHub is unavailable, the page links to the latest release without inventing metadata or counts. Rebuild after publishing a release to refresh the static metadata. The page distinguishes pre-v1.2.0 terminal releases from tray releases.
+The copy follows the current Rust app and the root `README.md`. At build time, `lib/release.ts` reads GitHub's latest stable release for its version, executable size, SHA-256, and actual asset download count. Source and checksum links are pinned to that release so the hash matches. If GitHub is unavailable, the page links to the latest release without inventing metadata or counts. Rebuild the production deployment after publishing a GitHub release to refresh the static metadata. The page distinguishes pre-v1.2.0 terminal releases from tray releases.
 
 Retrieval uses same-domain endpoints: `/download` redirects to the pinned `vstretch.exe` asset, while `/install.ps1` and `/install.sh` serve the repository installers (`scripts/sync-site-assets.mjs` copies them to `public/` on `prebuild`). The install command is `irm https://vstretch.blocksdev.pro/install.ps1 | iex` and Git Bash uses `curl -fsSL https://vstretch.blocksdev.pro/install.sh | sh`. `/changelog` renders the root `CHANGELOG.md` at build time.
 
@@ -29,7 +29,7 @@ npm run typecheck
 npm run check
 ```
 
-Next.js exports the production site to `out`, including React controls and bundled assets. The Sites manifest points to that directory and preserves the existing project ID. To preview the production build locally:
+Next.js exports the production site to `out`, including React controls and bundled assets. Vercel's GitHub integration deploys `main` to `vstretch.blocksdev.pro` and creates preview deployments for `develop`. The `.openai/hosting.json` manifest belongs to the older Sites copy. To preview the production build locally:
 
 ```powershell
 python -m http.server 4173 --bind 127.0.0.1 --directory out
