@@ -4,6 +4,8 @@
 
 vstretch is a Windows tray app for FPS players who use stretched resolutions in Valorant and CS2. Double-click the executable, then use its tray menu to switch between stretch and your native desktop resolution.
 
+This README describes the current source checkout. See the [changelog](CHANGELOG.md) for released changes and updates under **Unreleased**.
+
 Built for the classic loop:
 
 1. **Stretch** — lower res, wider models, the competitive look
@@ -40,10 +42,12 @@ Optional: add that folder to your PATH if you want `vstretch` / `vstretch -a` fr
 <details>
 <summary>Build from source (Rust)</summary>
 
+Build on Windows with the MSVC toolchain and Visual Studio C++ build tools. Local builds and CI use Rust 1.99, pinned in `rust-toolchain.toml`.
+
 ```powershell
-cargo install --git https://github.com/blocksdevpro/vstretch.git
+cargo install --locked --git https://github.com/blocksdevpro/vstretch.git
 # or from a local clone:
-cargo install --path .
+cargo install --locked --path .
 ```
 
 </details>
@@ -73,6 +77,8 @@ The header shows the installed app version and current display. Manual mode cont
 | **Exit** | Close the tray app; restore an automatic display change that it still owns |
 
 The Native and Stretch checkmarks reflect the current display. Preset checkmarks reflect your saved choice. Vstretch stays running as a background process while its tray icon is active; no main window needs to stay open. Opening it again with the same configuration keeps a single tray instance. Windows may place its icon in the tray overflow beside the clock.
+
+**Stretch presets** lists built-in resolutions with their aspect ratios. A saved resolution outside that list appears as **Custom**. If Vstretch cannot resolve a native target, **Native** shows **Unavailable**, and both **Native** and **Stretch** are disabled. Set a native override through the TUI to supply a restore target.
 
 Auto-stretch is enabled by default. It detects `VALORANT-Win64-Shipping.exe` and `cs2.exe`, applies your preset when the game gains focus, and restores the previous desktop when you close the game. Alt+Tab leaves the resolution unchanged by default. Enable **Restore desktop on Alt+Tab** if you want focus-based switching. The option is off for new and existing configurations unless you enable it.
 
@@ -136,9 +142,11 @@ Close Vstretch before running the installer again. The in-app updater can replac
 
 ### Hotkey toggle
 
-Built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch from anywhere, even in-game. No PowerToys or AutoHotkey needed. The tray menu shows the current combo beside **Toggle mode**; use **Settings → Enable hotkey** to turn it off. To change it, edit `hotkey` in `config.toml` (e.g. `Ctrl+Shift+F9`) while the tray runs — it re-registers automatically. Empty `hotkey` clears it. If the combo is invalid or already taken, the tray shows an actionable error and keeps running.
+The built-in global hotkey **Ctrl+Alt+S** toggles Native ↔ Stretch while the tray app runs, including in-game. The tray menu shows the current combo beside **Toggle mode** and **Settings → Enable hotkey**. Disabling it preserves your saved combo.
 
-One quiet command for PowerToys / AutoHotkey / etc. still works:
+To change it, edit `hotkey` in `config.toml`, for example to `Ctrl+Shift+F9`. The tray re-registers it automatically. Set `hotkey = ""` to clear it. If Windows cannot register the combo because another app uses it, the tray shows an error and keeps running. Invalid config edits show a reload error and leave the last valid configuration active.
+
+For a PowerToys or AutoHotkey binding, use the quiet command below. Run `vstretch` or `vstretch --tui` once first to create the configuration. The tray does not need to stay open for this command.
 
 ```powershell
 vstretch --auto
@@ -156,9 +164,11 @@ Created automatically on first launch at:
 
 Choose a stretch preset in the tray menu. Use `vstretch --tui` to set a custom native resolution under **Change default native…**.
 
-Native is auto-detected from the panel unless `[native]` is set. Stretch uses panel refresh unless `refresh` is set on `[stretch]`.
+The default stretch resolution is 1440×1080. Native is auto-detected from the panel unless `[native]` is set. Stretch uses panel refresh unless `refresh` is set on `[stretch]`. If a native override omits `refresh`, it uses panel Hz, falling back to 60 Hz when panel detection fails.
 
 Set `VSTRETCH_CONFIG` to an absolute file path to use a separate configuration, such as for portable use or development checks.
+
+Default configuration after the first tray launch:
 
 ```toml
 # vstretch — omit [native] to auto-detect the panel
@@ -172,7 +182,11 @@ hotkey_enabled = true
 [stretch]
 width = 1440
 height = 1080
+```
 
+To override native detection, add this section with your desktop's dimensions and refresh rate:
+
+```toml
 [native]
 width = 2560
 height = 1440
@@ -192,9 +206,13 @@ refresh = 180
 
 ```powershell
 cargo fmt --all -- --check
-cargo test
-cargo clippy --all-targets -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+cargo build --release --locked
+.\target\release\vstretch.exe --version
 ```
+
+CI runs these checks on Windows for pushes and pull requests targeting `main` and `develop`. For the landing page's separate build and checks, see the [website README](website/README.md).
 
 Display-switching, Windows shell, and startup integration tests are ignored by default. Run them individually with `cargo test <test-name> -- --ignored --exact --nocapture`; tray integration tests require `VSTRETCH_CONFIG` set to an isolated absolute config path. Real display and startup tests temporarily change those Windows settings and restore them afterward.
 
