@@ -27,7 +27,7 @@ To install with **Windows PowerShell** and add Vstretch to your user PATH, run:
 irm https://vstretch.blocksdev.pro/install.ps1 | iex
 ```
 
-The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates a per-user Start Menu shortcut, and needs no admin rights. Search for **vstretch** in Start to open or reopen the tray app, or run `vstretch` from a terminal. Running the installer again also repairs the shortcut.
+The installer puts `vstretch.exe` in `%LOCALAPPDATA%\vstretch\bin`, verifies the download's SHA-256 checksum, creates per-user desktop and Start Menu shortcuts, and needs no admin rights. Open the desktop shortcut, search for **vstretch** in Start, or run `vstretch` from a terminal. Running the installer again repairs both shortcuts and repoints an existing Windows startup entry to the installation folder, while keeping startup disabled if you turned it off.
 
 For **Git Bash on Windows**, the equivalent command is:
 
@@ -35,7 +35,7 @@ For **Git Bash on Windows**, the equivalent command is:
 curl -fsSL https://vstretch.blocksdev.pro/install.sh | sh
 ```
 
-The shell installer calls Windows PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
+The shell installer shows progress while fetching the installer, tries a GitHub mirror if needed, then opens the same PowerShell installer UI. Installer options, including `-NoProgress`, pass through to PowerShell. Vstretch requires Windows and does not run on Linux, macOS, or inside WSL.
 
 Optional: add that folder to your PATH if you want `vstretch` / `vstretch -a` from anywhere (handy for hotkeys).
 
@@ -119,7 +119,7 @@ The terminal interface includes mode switching and pickers for default stretch a
 
 The terminal interface checks GitHub for a newer stable release in the background when you open it with `--tui`. An update banner appears when a new version is available. Press `u`, then `Enter` to download and install it, or `Esc` to keep using your current version. Quit and reopen Vstretch after installation.
 
-Updates replace the executable in its current folder and preserve your display config. The download must match the release's SHA-256 digest before replacement. Offline checks show a retry message and keep the TUI usable. The hotkey command `--auto` skips update checks.
+Updates replace the executable in its current folder and preserve your display config. They refresh existing desktop and Start Menu shortcuts that point to that executable and notify Windows to reload their icons. Portable copies do not create shortcuts or take over another installation's startup entry. A running tray restores any desktop mode it owns, releases its icon and hotkey, and restarts with the updated executable after installation finishes. The TUI still needs to be closed and reopened. The download must match the release's SHA-256 digest before replacement. Offline checks show a retry message and keep the TUI usable. The hotkey command `--auto` skips update checks.
 
 You can also check or update from a terminal:
 
@@ -136,9 +136,11 @@ Invoke-WebRequest https://vstretch.blocksdev.pro/install.ps1 -OutFile install.ps
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -InstallDir C:\Tools\vstretch -NoPath
 ```
 
-`-NoPath` still creates the Start Menu shortcut. Add `-NoShortcut` to skip it.
+`-NoPath` still creates desktop and Start Menu shortcuts. Add `-NoDesktopShortcut` to create only the Start Menu shortcut, or `-NoShortcut` to skip both.
 
-Close Vstretch before running the installer again. The in-app updater can replace its own running executable.
+The PowerShell installer shows colored steps, an animated loader, and download progress. Add `-NoProgress` for ordinary log lines, or set `NO_COLOR` to disable colors. Redirected output uses plain lines automatically.
+
+The installer and in-app updater can replace a running executable and reject overlapping installations. Automatic tray restart applies to builds containing this behavior; close and reopen older releases after updating. Windows may keep a locked installer backup until the old process exits; the next installer run cleans it up.
 
 ### Hotkey toggle
 
@@ -204,6 +206,8 @@ refresh = 180
 
 ## Development checks
 
+See [Project functions and execution flows](FUNCTIONS.md) for the user actions, execution trees, diagrams, and core function reference.
+
 ```powershell
 cargo fmt --all -- --check
 cargo test --locked
@@ -215,6 +219,10 @@ cargo build --release --locked
 CI runs these checks on Windows for pushes and pull requests targeting `main` and `develop`. For the landing page's separate build and checks, see the [website README](website/README.md).
 
 Display-switching, Windows shell, and startup integration tests are ignored by default. Run them individually with `cargo test <test-name> -- --ignored --exact --nocapture`; tray integration tests require `VSTRETCH_CONFIG` set to an isolated absolute config path. Real display and startup tests temporarily change those Windows settings and restore them afterward.
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/install.Tests.ps1` for offline installer checks using isolated shortcuts and a temporary registry key. After building, add `-TrayExecutable target/debug/vstretch.exe` to verify replacement and automatic restart of a real tray with automatic display switching and startup disabled. Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/install-ui.Tests.ps1` to check animated and plain output, slow downloads, and HTTP errors against a local server.
+
+Run `bash tests/install-sh.Tests.sh` in Git Bash for offline bootstrap checks covering mirror fallback, argument forwarding, failure messages, and temporary-file cleanup.
 
 ## License
 

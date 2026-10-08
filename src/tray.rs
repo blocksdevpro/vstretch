@@ -569,10 +569,11 @@ impl Drop for Timer {
     }
 }
 
-pub fn run() -> Result<()> {
+pub fn run() -> Result<Option<std::path::PathBuf>> {
     let Some(_instance) = platform::tray_instance(&Config::config_path()?)? else {
-        return Ok(());
+        return Ok(None);
     };
+    let executable = crate::update::ExecutableWatch::new(std::env::current_exe()?)?;
     let mut app = App::new()?;
     let timer = Timer::new()?;
     let mut message = MSG::default();
@@ -600,7 +601,7 @@ pub fn run() -> Result<()> {
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if let Some(command) = app.menu.command(event.id()) {
                 match app.handle(command) {
-                    Ok(true) => return Ok(()),
+                    Ok(true) => return Ok(None),
                     Ok(false) => {}
                     Err(error) => {
                         app.error = Some(format!("{error:#}"));
@@ -617,7 +618,7 @@ pub fn run() -> Result<()> {
         while TrayIconEvent::receiver().try_recv().is_ok() {}
         if message.message == WM_HOTKEY && message.wParam.0 == HOTKEY_ID as usize {
             match app.handle(Command::Toggle) {
-                Ok(true) => return Ok(()),
+                Ok(true) => return Ok(None),
                 Ok(false) => {}
                 Err(error) => {
                     app.error = Some(format!("{error:#}"));
@@ -630,10 +631,17 @@ pub fn run() -> Result<()> {
             app.sync_menu();
         }
         if message.message == WM_TIMER && message.hwnd.is_invalid() && message.wParam.0 == timer.0 {
+            if executable.changed() {
+                // Restore first; the caller releases tray/hotkey ownership and
+                // finishes the recovery journal before starting the new image.
+                app.restore_on_exit()?;
+                return Ok(Some(executable.path));
+            }
             app.tick();
         }
     }
-    app.restore_on_exit()
+    app.restore_on_exit()?;
+    Ok(None)
 }
 
 /// Canonical terracotta V from `assets/icon.svg`, baked to 32x32 RGBA.

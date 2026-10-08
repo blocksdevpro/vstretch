@@ -50,8 +50,6 @@ python -m http.server 4173 --bind 127.0.0.1 --directory out
 - `lib/release.ts`: build-time GitHub release metadata and pinned asset links.
 - `scripts/sync-site-assets.mjs`: copies root installers to `public/` for `/install.ps1` and `/install.sh`.
 
-The proposed production address is `vstretch.blocksdev.pro`. See [DOMAIN-SETUP.md](DOMAIN-SETUP.md) for connection instructions.
-
 ## Design references
 
 - [USWDS typography](https://designsystem.digital.gov/components/typography/): comfortable body text, line length, and hierarchy.

@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Add colored installer steps, animated network loaders, download progress, and clear completion and failure messages, with plain output for logs
+- Match the Git Bash installer to the PowerShell UI, with a bootstrap loader, GitHub mirror fallback, and clearer download errors
 - Reorganize the native tray menu with an app version and display header, top-level Toggle mode, Native, Stretch, and Stretch presets actions, plus Automatic switching and Settings submenus
 - Align resolutions, preset aspect ratios, and hotkey labels in the menu's right-hand column; show the saved hotkey beside Enable hotkey
 - Update the README with current menu behavior, configuration defaults, hotkey setup, and the pinned Rust build and CI commands
 
 ### Fixed
 
+- Refresh desktop and Start Menu shortcuts and their icons during installation and updates, preserve startup opt-outs, and repoint existing startup entries on reinstall
+- Restart a running tray after executable replacement, restoring its owned desktop mode and releasing its tray icon and hotkey first; coordinate installers and updaters with one installation lock
 - Display the ampersand in the Auto-stretch Valorant & CS2 menu label correctly on Windows
 - Keep website footers at the bottom of the viewport on short pages and preserve the download, changelog, and privacy content widths
 

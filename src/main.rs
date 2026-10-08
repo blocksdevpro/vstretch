@@ -77,7 +77,10 @@ fn run(cli: Cli) -> Result<()> {
             Some(release) if cli.update => {
                 println!("Installing vstretch {}...", release.version);
                 update::install(&release)?;
-                println!("Updated to {}. Reopen vstretch to use it.", release.version);
+                println!(
+                    "Updated to {}. A running tray will restart automatically; otherwise open vstretch.",
+                    release.version
+                );
             }
             Some(release) => println!(
                 "vstretch {} is available. Run vstretch --update to install it.",
@@ -104,13 +107,22 @@ fn run(cli: Cli) -> Result<()> {
                 )?,
             };
             println!("{} [{}]", mode.label(), config.stretch.name());
-            return Ok(());
+            return Ok(None);
         }
 
-        if cli.tui { tui::run() } else { tray::run() }
+        if cli.tui {
+            tui::run()?;
+            Ok(None)
+        } else {
+            tray::run()
+        }
     })();
-    if result.is_ok() {
-        recovery::finish().context("finish display session")?;
+    let restart = result?;
+    recovery::finish().context("finish display session")?;
+    if let Some(executable) = restart {
+        std::process::Command::new(executable)
+            .spawn()
+            .context("restart updated tray; open vstretch again")?;
     }
-    result
+    Ok(())
 }

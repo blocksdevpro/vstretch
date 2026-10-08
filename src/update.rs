@@ -1,9 +1,11 @@
 //! Checks stable GitHub releases and verifies downloads before replacing the app.
 
 use std::{
-    fs,
+    fs::{self, File, OpenOptions},
     io::{Read, Write},
-    path::Path,
+    os::windows::{fs::OpenOptionsExt, process::CommandExt},
+    path::{Path, PathBuf},
+    process::Command,
     time::Duration,
 };
 
@@ -119,15 +121,108 @@ pub fn install(release: &Release) -> Result<()> {
         .take(release.size + 1)
         .read_to_end(&mut bytes)
         .context("read update download")?;
-    verify_binary(&bytes, release)?;
+    install_download(&bytes, release)
+}
+
+fn install_download(bytes: &[u8], release: &Release) -> Result<()> {
+    verify_binary(bytes, release)?;
+    let executable = std::env::current_exe().context("locate vstretch.exe")?;
+    let directory = executable.parent().context("executable has no directory")?;
+    // The installer uses the same exclusive file handle, including during repairs.
+    let _lock = installation_lock(directory)?;
     let mut staged = tempfile::Builder::new()
         .prefix("vstretch-update-")
         .suffix(".exe")
         .tempfile()
         .context("stage update")?;
-    staged.write_all(&bytes).context("write update")?;
+    staged.write_all(bytes).context("write update")?;
     staged.flush()?;
-    replace_executable(staged.path())
+    replace_executable(staged.path())?;
+    refresh_integration(&executable)
+        .context("executable updated, but Windows integration repair failed; rerun the installer")
+}
+
+fn installation_lock(directory: &Path) -> Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .share_mode(0)
+        .open(directory.join(".install.lock"))
+        .context("installation is busy or not writable; close other installers and retry")
+}
+
+fn refresh_integration(executable: &Path) -> Result<()> {
+    let mut script = tempfile::Builder::new().suffix(".ps1").tempfile()?;
+    script.write_all(include_bytes!("../install.ps1"))?;
+    script.flush()?;
+    // PowerShell opens scripts with sharing that excludes a live writer.
+    let script = script.into_temp_path();
+    let powershell = PathBuf::from(std::env::var_os("SystemRoot").context("locate Windows")?)
+        .join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    let output = Command::new(powershell)
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script)
+        .arg("-RepairExecutable")
+        .arg(executable)
+        .arg("-RefreshExistingOnly")
+        .output()
+        .context("run Windows integration repair")?;
+    ensure!(
+        output.status.success(),
+        "Windows integration repair: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
+/// Watches the original launch path, even when Windows renames the running image.
+/// Missing/locked files during replacement are retried on the next tray tick.
+pub struct ExecutableWatch {
+    pub path: PathBuf,
+    modified: std::time::SystemTime,
+    length: u64,
+    digest: Vec<u8>,
+}
+
+impl ExecutableWatch {
+    pub fn new(path: PathBuf) -> Result<Self> {
+        let metadata = fs::metadata(&path)?;
+        Ok(Self {
+            digest: Sha256::digest(fs::read(&path)?).to_vec(),
+            modified: metadata.modified()?,
+            length: metadata.len(),
+            path,
+        })
+    }
+
+    pub fn changed(&self) -> bool {
+        let Some(directory) = self.path.parent() else {
+            return false;
+        };
+        // Don't restart until replacement and shell repairs have both finished.
+        let Ok(_lock) = installation_lock(directory) else {
+            return false;
+        };
+        let Ok(metadata) = fs::metadata(&self.path) else {
+            return false;
+        };
+        if metadata.len() == self.length && metadata.modified().ok() == Some(self.modified) {
+            return false;
+        }
+        fs::read(&self.path)
+            .map(|bytes| Sha256::digest(bytes).as_slice() != self.digest)
+            .unwrap_or(false)
+    }
 }
 
 fn replace_executable(replacement: &Path) -> Result<()> {
@@ -207,7 +302,13 @@ pub(crate) mod tests {
         use std::{fs, process::Command};
         const CHILD_REPLACEMENT: &str = "VSTRETCH_SELF_REPLACE_TEST";
         if let Some(replacement) = std::env::var_os(CHILD_REPLACEMENT) {
-            replace_executable(Path::new(&replacement)).unwrap();
+            let bytes = fs::read(replacement).unwrap();
+            let mut release = available_release();
+            release.size = bytes.len() as u64;
+            release.sha256 = format!("{:x}", Sha256::digest(&bytes));
+            // Exercise verified staging, replacement, the shared install lock,
+            // and the real embedded PowerShell repair in the running child.
+            install_download(&bytes, &release).unwrap();
             return;
         }
         let directory = tempfile::tempdir().unwrap();
@@ -228,7 +329,8 @@ pub(crate) mod tests {
             .unwrap();
         assert!(
             child.status.success(),
-            "{}",
+            "{}\n{}",
+            String::from_utf8_lossy(&child.stdout),
             String::from_utf8_lossy(&child.stderr)
         );
         assert_eq!(fs::read(&original).unwrap(), updated);
@@ -342,5 +444,38 @@ pub(crate) mod tests {
         let mut invalid = selected;
         invalid.sha256 = format!("{:x}", Sha256::digest(b"bad"));
         assert!(verify_binary(b"bad", &invalid).is_err());
+    }
+
+    #[test]
+    fn tray_waits_for_installation_then_detects_the_replaced_image() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("vstretch.exe");
+        fs::write(&executable, b"old image").unwrap();
+        let watch = ExecutableWatch::new(executable.clone()).unwrap();
+        assert!(!watch.changed());
+        let lock = installation_lock(directory.path()).unwrap();
+        assert!(installation_lock(directory.path()).is_err());
+        fs::remove_file(&executable).unwrap();
+        assert!(!watch.changed());
+        fs::write(&executable, b"updated image").unwrap();
+        assert!(
+            !watch.changed(),
+            "tray restarted before shell repair completed"
+        );
+        drop(lock);
+        assert!(watch.changed());
+    }
+
+    #[test]
+    fn unchanged_or_temporarily_missing_image_does_not_restart_the_tray() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("vstretch.exe");
+        fs::write(&executable, b"old image").unwrap();
+        let watch = ExecutableWatch::new(executable.clone()).unwrap();
+        let backup = directory.path().join("backup.exe");
+        fs::rename(&executable, &backup).unwrap();
+        assert!(!watch.changed());
+        fs::copy(&backup, &executable).unwrap();
+        assert!(!watch.changed(), "identical content should not restart");
     }
 }
