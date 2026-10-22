@@ -15,8 +15,8 @@ The current published executable is unsigned and SignPath signing is in progress
 Run these commands in the `website` directory:
 
 ```powershell
-npm ci
-npm run dev
+bun install
+bun run dev
 ```
 
 Open `http://127.0.0.1:4173`.
@@ -24,9 +24,9 @@ Open `http://127.0.0.1:4173`.
 ## Build and verify
 
 ```powershell
-npm run build
-npm run typecheck
-npm run check
+bun run build
+bun run typecheck
+bun run check
 ```
 
 Next.js exports the production site to `out`, including React controls and bundled assets. Vercel's GitHub integration deploys `main` to `vstretch.blocksdev.pro` and creates preview deployments for `develop`. The `.openai/hosting.json` manifest belongs to the older Sites copy. To preview the production build locally:
