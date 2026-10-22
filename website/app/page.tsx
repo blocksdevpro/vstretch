@@ -113,7 +113,7 @@ export default async function Home() {
         <footer className="mt-auto flex flex-wrap items-center justify-between gap-4 border-t py-7 text-xs text-muted-foreground">
           <Brand footer />
           <p>By <a href="https://www.blocksdev.pro/" target="_blank" rel="noopener noreferrer" className="hover:text-primary">blocksdev</a></p>
-          {release && <a href={executableUrl} title={`${release.version} downloads, checked ${release.checkedAt}`} className="hover:text-primary">{release.downloads.toLocaleString("en-US")} downloads</a>}
+          {release && <a href={executableUrl} title={`Total downloads across all releases, checked ${release.checkedAt}`} className="hover:text-primary">{release.totalDownloads.toLocaleString("en-US")} downloads</a>}
           <a href={`${repository}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer" className="hover:text-primary">MIT license</a>
           <a href={changelogEndpoint} className="hover:text-primary">Changelog</a>
           <a href="/privacy.html" className="hover:text-primary">Privacy</a>
