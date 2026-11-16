@@ -101,6 +101,26 @@ impl AutoStretch {
         };
     }
 
+    /// Whether a stretch lost while the PC slept still belongs on screen.
+    ///
+    /// A session the tray owns may have ended during sleep; the desktop mode is
+    /// then already correct and must not be stretched again.
+    pub fn allows_stretch_after_wake(self, policy: AutoPolicy, activity: GameActivity) -> bool {
+        match self {
+            Self::Owned { .. } | Self::RestoreFailed { .. } => {
+                policy.enabled && !activity.session_ended(policy.restore_on_alt_tab)
+            }
+            _ => true,
+        }
+    }
+
+    /// Keeps the original restore target after stretch is applied again.
+    pub fn reapplied(&mut self, applied: Mode) {
+        if let Self::Owned { desktop, .. } | Self::RestoreFailed { desktop, .. } = *self {
+            *self = Self::Owned { desktop, applied };
+        }
+    }
+
     pub fn manual_choice(&mut self) {
         *self = Self::PausedUntilSessionEnds;
     }
@@ -241,6 +261,37 @@ mod tests {
         assert!(auto.observe(DEFAULT, Stopped, STRETCH).is_some());
         assert_eq!(auto.observe(DEFAULT, Stopped, STRETCH), None);
         assert_eq!(auto.restore_on_exit(STRETCH), Some(DESKTOP));
+    }
+
+    #[test]
+    fn stretch_is_reapplied_after_wake_only_while_the_session_continues() {
+        let mut auto = AutoStretch::default();
+        auto.applied(DESKTOP, STRETCH);
+        assert!(auto.allows_stretch_after_wake(DEFAULT, Focused));
+        assert!(auto.allows_stretch_after_wake(DEFAULT, Background));
+        assert!(!auto.allows_stretch_after_wake(DEFAULT, Stopped));
+        assert!(!auto.allows_stretch_after_wake(ON_ALT_TAB, Background));
+        assert!(!auto.allows_stretch_after_wake(DISABLED, Focused));
+        // Manual stretch is not tied to a game session.
+        auto.manual_choice();
+        assert!(auto.allows_stretch_after_wake(DEFAULT, Stopped));
+    }
+
+    #[test]
+    fn reapplying_after_wake_keeps_the_desktop_restore_target() {
+        let mut auto = AutoStretch::default();
+        auto.applied(DESKTOP, STRETCH);
+        auto.observe(DEFAULT, Stopped, STRETCH);
+        auto.observe(DEFAULT, Stopped, STRETCH);
+        let refreshed = Mode {
+            refresh: 144,
+            ..STRETCH
+        };
+        auto.reapplied(refreshed);
+        assert_eq!(auto.restore_on_exit(refreshed), Some(DESKTOP));
+        auto.manual_choice();
+        auto.reapplied(STRETCH);
+        assert_eq!(auto.restore_on_exit(STRETCH), None);
     }
 
     #[test]
