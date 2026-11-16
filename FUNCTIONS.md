@@ -21,7 +21,7 @@ The Windows app changes the **primary display**. The tray, terminal interface, a
 
 ## Startup and command routing
 
-Source: [main.rs](src/main.rs), [tray.rs](src/tray.rs), and [tui.rs](src/tui.rs).
+Source: [main.rs](src/main.rs), [tray/mod.rs](src/tray/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui.rs](src/tui.rs).
 
 ```mermaid
 flowchart TD
@@ -41,7 +41,7 @@ flowchart TD
 
 ### Open the tray app
 
-Entry: double-click the executable, open its Start Menu shortcut, or run `vstretch`. Functions: `main::run`, `tray::run`, and `tray::App::new`.
+Entry: double-click the executable, open its Start Menu shortcut, or run `vstretch`. Functions: `main::run`, `tray::run`, and `tray::App::new`. Menu selections and the hotkey both go through `tray::App::run_command`.
 
 ```text
 Launch without flags
@@ -161,7 +161,7 @@ This command runs once and skips update checks. If a running tray owns an automa
 
 ## Saved resolutions and configuration
 
-Source: [config/mod.rs](src/config/mod.rs), [tray.rs](src/tray.rs), and [tui.rs](src/tui.rs).
+Source: [config/mod.rs](src/config/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui.rs](src/tui.rs).
 
 ### Choose a stretch preset
 
@@ -233,7 +233,7 @@ An action saves settings
 
 ## Automatic stretch and settings
 
-Source: [autostretch.rs](src/autostretch.rs), [platform.rs](src/platform.rs), and `tray::App::tick` / `tray::App::run_auto` in [tray.rs](src/tray.rs).
+Source: [autostretch.rs](src/autostretch.rs), [platform.rs](src/platform.rs), and `tray::App::tick` / `tray::App::run_auto` in [tray/app.rs](src/tray/app.rs).
 
 ### Enable or disable auto-stretch
 
@@ -328,7 +328,7 @@ Timer tick
 
 ### Enable, disable, or change the global hotkey
 
-Entries: tray **Settings → Enable hotkey**, or edit `hotkey` in the configuration. Handler: `Command::HotkeyEnabled`. Source: `Hotkey::sync` in [tray.rs](src/tray.rs) and [config/hotkey.rs](src/config/hotkey.rs).
+Entries: tray **Settings → Enable hotkey**, or edit `hotkey` in the configuration. Handler: `Command::HotkeyEnabled`. Source: `Hotkey::sync` in [tray/hotkey.rs](src/tray/hotkey.rs) and [config/hotkey.rs](src/config/hotkey.rs).
 
 ```text
 Toggle Enable hotkey
