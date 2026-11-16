@@ -6,6 +6,7 @@
 mod autostretch;
 mod config;
 mod display;
+mod game;
 mod platform;
 mod recovery;
 mod startup;

@@ -233,7 +233,7 @@ An action saves settings
 
 ## Automatic stretch and settings
 
-Source: [autostretch.rs](src/autostretch.rs), [platform.rs](src/platform.rs), and `tray::App::tick` / `tray::App::run_auto` in [tray/app.rs](src/tray/app.rs).
+Source: [autostretch.rs](src/autostretch.rs), [game.rs](src/game.rs), and `tray::App::tick` / `tray::App::run_auto` in [tray/app.rs](src/tray/app.rs).
 
 ### Enable or disable auto-stretch
 
@@ -271,7 +271,7 @@ Entry: the tray's 750 ms timer. This is automatic behavior following the user's 
 ```text
 Timer tick
 ├─ Reload configuration and read current/panel/native modes
-├─ platform::game_activity checks running processes and the foreground process
+├─ game::game_activity checks running processes and the foreground process
 │  ├─ No supported process → Stopped
 │  ├─ Supported process in foreground → Focused
 │  ├─ Supported process running elsewhere → Background
@@ -655,11 +655,11 @@ Source: [recovery.rs](src/recovery.rs) and [platform.rs](src/platform.rs).
 
 ### Windows integration and updates
 
-Sources: [platform.rs](src/platform.rs), [startup.rs](src/startup.rs), [update.rs](src/update.rs), and [theme.rs](src/tray/theme.rs).
+Sources: [platform.rs](src/platform.rs), [game.rs](src/game.rs), [startup.rs](src/startup.rs), [update.rs](src/update.rs), and [theme.rs](src/tray/theme.rs).
 
 | Function | Responsibility |
 | --- | --- |
-| `platform::game_activity` / `has_running_game` / `foreground_is_game` / `is_game_executable` | Detect supported process presence and foreground focus, preserving uncertainty on query failure. |
+| `game::game_activity` / `has_running_game` / `foreground_is_game` / `is_game_executable` | Detect supported process presence and foreground focus, preserving uncertainty on query failure. |
 | `platform::attach_console` / `platform::ensure_console` | Attach CLI output to the parent console or allocate a terminal for the TUI. |
 | `platform::show_error` | Display a Windows error dialog for launch or manual tray failures. |
 | `startup::initialize` | Enable startup and save the preference once when it is unset. |

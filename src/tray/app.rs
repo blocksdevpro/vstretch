@@ -13,7 +13,7 @@ use crate::{
     autostretch::{Action, AutoStretch, GameActivity},
     config::Config,
     display::{self, DisplayState, ModeKind},
-    platform, startup,
+    game, platform, startup,
     wake::{PowerWatcher, WakePlan, WakeRestore},
 };
 
@@ -139,7 +139,7 @@ impl App {
             Err(error) => self.error = Some(format!("Config: {error:#}")),
         }
         self.refresh_display();
-        let activity = platform::game_activity();
+        let activity = game::game_activity();
         if let Some(activity) = activity {
             self.activity = activity;
         }
