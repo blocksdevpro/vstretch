@@ -21,7 +21,7 @@ The Windows app changes the **primary display**. The tray, terminal interface, a
 
 ## Startup and command routing
 
-Source: [main.rs](src/main.rs), [tray/mod.rs](src/tray/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui.rs](src/tui.rs).
+Source: [main.rs](src/main.rs), [tray/mod.rs](src/tray/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui/mod.rs](src/tui/mod.rs).
 
 ```mermaid
 flowchart TD
@@ -161,7 +161,7 @@ This command runs once and skips update checks. If a running tray owns an automa
 
 ## Saved resolutions and configuration
 
-Source: [config/mod.rs](src/config/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui.rs](src/tui.rs).
+Source: [config/mod.rs](src/config/mod.rs), [tray/app.rs](src/tray/app.rs), and [tui/app.rs](src/tui/app.rs).
 
 ### Choose a stretch preset
 
@@ -379,7 +379,7 @@ Create tray icon
 
 ## Terminal controls and exit
 
-Source: `tui::App::on_key`, the screen-specific key handlers, and `TerminalSession` in [tui.rs](src/tui.rs).
+Source: `tui::App::on_key` and the screen-specific key handlers in [tui/app.rs](src/tui/app.rs), drawing in [tui/view.rs](src/tui/view.rs), and `TerminalSession` in [tui/mod.rs](src/tui/mod.rs).
 
 ### Navigate, select, cancel, and refresh
 
@@ -437,7 +437,7 @@ Manual mode choices and externally replaced modes survive Exit. A normal Windows
 
 ## Updates
 
-Source: [update.rs](src/update.rs), [main.rs](src/main.rs), and `UpdateState` in [tui.rs](src/tui.rs).
+Source: [update.rs](src/update.rs), [main.rs](src/main.rs), and `UpdateState` in [tui/app.rs](src/tui/app.rs).
 
 ### Check for an update
 
