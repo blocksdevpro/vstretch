@@ -12,6 +12,7 @@ mod startup;
 mod tray;
 mod tui;
 mod update;
+mod wake;
 
 #[cfg(not(windows))]
 compile_error!("vstretch is Windows-only (uses Win32 display APIs)");

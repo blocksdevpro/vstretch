@@ -25,6 +25,7 @@ use crate::{
     config::{Config, POPULAR_STRETCH, Profile},
     display::{self, Mode, ModeKind},
     platform, startup,
+    wake::{PowerWatcher, WakePlan, WakeRestore},
 };
 
 /// Thread-wide hotkey id for the Native ↔ Stretch toggle.
@@ -299,6 +300,8 @@ struct App {
     error: Option<String>,
     hotkey: Hotkey,
     hotkey_error: Option<String>,
+    power: PowerWatcher,
+    wake: WakeRestore,
 }
 
 impl App {
@@ -327,6 +330,8 @@ impl App {
             error: None,
             hotkey,
             hotkey_error,
+            power: PowerWatcher::new(),
+            wake: WakeRestore::default(),
         };
         app.refresh_display();
         if let Err(error) = startup::initialize(&mut app.config) {
@@ -411,15 +416,59 @@ impl App {
             Err(error) => self.error = Some(format!("Config: {error:#}")),
         }
         self.refresh_display();
-        if let Some(activity) = platform::game_activity() {
+        let activity = platform::game_activity();
+        if let Some(activity) = activity {
             self.activity = activity;
-            self.run_auto();
-        } else if !self.config.auto_stretch {
+        }
+        // While a wake restore is pending the display is mid-reset, which must
+        // not look like an outside change to auto-stretch.
+        if !self.restore_after_wake() && (activity.is_some() || !self.config.auto_stretch) {
             self.run_auto();
         }
         self.refresh_startup();
         self.sync_hotkey();
         self.sync_menu();
+    }
+
+    /// Windows can reset the display while sleeping. Put stretch back, keeping
+    /// any restore target the automatic session already owns. Returns true while
+    /// the wake is still being handled.
+    fn restore_after_wake(&mut self) -> bool {
+        let events = self.power.poll();
+        let stretched = display::classify_mode(
+            self.current,
+            self.native,
+            self.panel,
+            Some(&self.config.stretch),
+        ) == ModeKind::Stretch;
+        let plan = self.wake.observe(events, stretched, self.current.is_some());
+        if plan == WakePlan::Idle {
+            return false;
+        }
+        let policy = AutoPolicy {
+            enabled: self.config.auto_stretch,
+            restore_on_alt_tab: self.config.restore_on_alt_tab,
+        };
+        if !self.auto.allows_stretch_after_wake(policy, self.activity) {
+            self.wake.cancel();
+            return false;
+        }
+        if plan == WakePlan::Reapply {
+            match display::apply_profile(
+                &self.config.stretch,
+                display::stretch_refresh(self.panel, self.native),
+            ) {
+                Ok(applied) => {
+                    self.auto.reapplied(applied);
+                    self.error = None;
+                    self.refresh_display();
+                }
+                Err(error) => {
+                    self.error = Some(format!("Restoring stretch after wake: {error:#}"));
+                }
+            }
+        }
+        true
     }
 
     fn run_auto(&mut self) {
@@ -455,6 +504,13 @@ impl App {
 
     fn handle(&mut self, command: Command) -> Result<bool> {
         self.error = None;
+        // An explicit display choice outranks anything remembered from before sleep.
+        if matches!(
+            command,
+            Command::Native | Command::Stretch | Command::Toggle | Command::Preset(_)
+        ) {
+            self.wake.cancel();
+        }
         self.refresh_display();
         match command {
             Command::Native => {
