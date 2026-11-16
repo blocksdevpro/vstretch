@@ -21,9 +21,9 @@ use windows::{
 };
 
 use crate::{
-    autostretch::{Action, AutoPolicy, AutoStretch, GameActivity},
+    autostretch::{Action, AutoStretch, GameActivity},
     config::{Config, POPULAR_STRETCH, Profile},
-    display::{self, Mode, ModeKind},
+    display::{self, DisplayState, ModeKind},
     platform, startup,
     wake::{PowerWatcher, WakePlan, WakeRestore},
 };
@@ -248,14 +248,9 @@ impl TrayMenu {
         }
     }
 
-    fn sync(
-        &self,
-        config: &Config,
-        current: Option<Mode>,
-        panel: Option<Mode>,
-        native: Option<Mode>,
-    ) {
-        let kind = display::classify_mode(current, native, panel, Some(&config.stretch));
+    fn sync(&self, config: &Config, display: &DisplayState) {
+        let kind = display.kind(&config.stretch);
+        let native = display.native;
         self.native.set_text(
             native
                 .map(|n| format!("Native\t{} × {}", n.width, n.height))
@@ -293,9 +288,7 @@ struct App {
     menu: TrayMenu,
     icon: TrayIcon,
     auto: AutoStretch,
-    current: Option<Mode>,
-    panel: Option<Mode>,
-    native: Option<Mode>,
+    display: DisplayState,
     activity: GameActivity,
     error: Option<String>,
     hotkey: Hotkey,
@@ -323,9 +316,7 @@ impl App {
             menu,
             icon,
             auto: AutoStretch::default(),
-            current: None,
-            panel: None,
-            native: None,
+            display: DisplayState::default(),
             activity: GameActivity::Stopped,
             error: None,
             hotkey,
@@ -348,9 +339,7 @@ impl App {
     }
 
     fn refresh_display(&mut self) {
-        self.current = display::get_current_resolution().ok();
-        self.panel = display::get_native_resolution().ok();
-        self.native = display::resolve_native(self.config.native.as_ref(), self.panel).ok();
+        self.display = DisplayState::read(self.config.native.as_ref());
     }
 
     fn refresh_startup(&mut self) {
@@ -368,8 +357,7 @@ impl App {
     }
 
     fn sync_menu(&mut self) {
-        self.menu
-            .sync(&self.config, self.current, self.panel, self.native);
+        self.menu.sync(&self.config, &self.display);
         let status = {
             let mut problems = Vec::new();
             if let Some(error) = &self.error {
@@ -379,7 +367,8 @@ impl App {
                 problems.push(error.clone());
             }
             if problems.is_empty() {
-                self.current
+                self.display
+                    .current
                     .map(|mode| {
                         format!(
                             "Current display\t{} × {} @ {} Hz",
@@ -435,29 +424,22 @@ impl App {
     /// the wake is still being handled.
     fn restore_after_wake(&mut self) -> bool {
         let events = self.power.poll();
-        let stretched = display::classify_mode(
-            self.current,
-            self.native,
-            self.panel,
-            Some(&self.config.stretch),
-        ) == ModeKind::Stretch;
-        let plan = self.wake.observe(events, stretched, self.current.is_some());
+        let stretched = self.display.kind(&self.config.stretch) == ModeKind::Stretch;
+        let plan = self
+            .wake
+            .observe(events, stretched, self.display.current.is_some());
         if plan == WakePlan::Idle {
             return false;
         }
-        let policy = AutoPolicy {
-            enabled: self.config.auto_stretch,
-            restore_on_alt_tab: self.config.restore_on_alt_tab,
-        };
-        if !self.auto.allows_stretch_after_wake(policy, self.activity) {
+        if !self
+            .auto
+            .allows_stretch_after_wake(self.config.auto_policy(), self.activity)
+        {
             self.wake.cancel();
             return false;
         }
         if plan == WakePlan::Reapply {
-            match display::apply_profile(
-                &self.config.stretch,
-                display::stretch_refresh(self.panel, self.native),
-            ) {
+            match self.display.apply_stretch(&self.config.stretch) {
                 Ok(applied) => {
                     self.auto.reapplied(applied);
                     self.error = None;
@@ -472,28 +454,26 @@ impl App {
     }
 
     fn run_auto(&mut self) {
-        let Some(current) = self.current else { return };
-        let policy = AutoPolicy {
-            enabled: self.config.auto_stretch,
-            restore_on_alt_tab: self.config.restore_on_alt_tab,
+        let Some(current) = self.display.current else {
+            return;
         };
+        let policy = self.config.auto_policy();
         let Some(action) = self.auto.observe(policy, self.activity, current) else {
             return;
         };
         let result = match action {
             Action::Stretch { desktop } => {
-                if self.native.is_none() {
+                if self.display.native.is_none() {
                     self.error = Some("Auto-stretch paused: native resolution unavailable".into());
                     return;
                 }
-                display::apply_profile(
-                    &self.config.stretch,
-                    display::stretch_refresh(self.panel, self.native),
-                )
-                .map(|applied| self.auto.applied(desktop, applied))
+                self.display
+                    .apply_stretch(&self.config.stretch)
+                    .map(|applied| self.auto.applied(desktop, applied))
             }
-            Action::Restore { desktop } => display::change_resolution(desktop)
-                .map(|()| self.auto.restored(policy, self.activity)),
+            Action::Restore { desktop } => {
+                display::change_mode(desktop).map(|()| self.auto.restored(policy, self.activity))
+            }
         };
         match result {
             Ok(()) => self.error = None,
@@ -514,43 +494,27 @@ impl App {
         self.refresh_display();
         match command {
             Command::Native => {
-                let native = self.native.context("could not detect native resolution")?;
-                display::restore_native(native, &self.config.stretch)?;
+                self.display.restore_native(&self.config.stretch)?;
                 self.auto.manual_choice();
             }
             Command::Stretch => {
-                self.native.context("could not detect native resolution")?;
-                display::apply_profile(
-                    &self.config.stretch,
-                    display::stretch_refresh(self.panel, self.native),
-                )?;
+                // Automatic sessions and manual stretch both need a known restore target.
+                self.display.native()?;
+                self.display.apply_stretch(&self.config.stretch)?;
                 self.auto.manual_choice();
             }
             Command::Toggle => {
-                let native = self.native.context("could not detect native resolution")?;
-                display::toggle_stretch(
-                    &self.config.stretch,
-                    native,
-                    display::stretch_refresh(self.panel, Some(native)),
-                )?;
+                self.display.toggle(&self.config.stretch)?;
                 self.auto.manual_choice();
             }
             Command::Preset(profile) => {
-                let was_stretch = display::classify_mode(
-                    self.current,
-                    self.native,
-                    self.panel,
-                    Some(&self.config.stretch),
-                ) == ModeKind::Stretch;
+                let was_stretch = self.display.kind(&self.config.stretch) == ModeKind::Stretch;
                 let mut next = self.config.clone();
                 next.stretch = profile;
                 next.save_default_path()?;
                 self.config = next;
                 if was_stretch {
-                    display::apply_profile(
-                        &self.config.stretch,
-                        display::stretch_refresh(self.panel, self.native),
-                    )?;
+                    self.display.apply_stretch(&self.config.stretch)?;
                     self.auto.manual_choice();
                 }
             }
@@ -594,11 +558,11 @@ impl App {
     }
 
     fn restore_on_exit(&mut self) -> Result<()> {
-        if let Some(desktop) = display::get_current_resolution()
+        if let Some(desktop) = display::current_mode()
             .ok()
             .and_then(|current| self.auto.restore_on_exit(current))
         {
-            display::change_resolution(desktop)
+            display::change_mode(desktop)
                 .context("could not restore the desktop; select Native before exiting")?;
             self.auto = AutoStretch::Ready;
         }
@@ -718,6 +682,7 @@ fn tray_icon() -> Result<Icon> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::display::Mode;
     use tray_icon::menu::ContextMenu;
     use windows::Win32::UI::WindowsAndMessaging::{GetMenuStringW, HMENU, MF_BYPOSITION};
 
@@ -740,10 +705,10 @@ mod tests {
         struct RestoreDisplay(Mode);
         impl Drop for RestoreDisplay {
             fn drop(&mut self) {
-                let _ = display::change_resolution(self.0);
+                let _ = display::change_mode(self.0);
             }
         }
-        let original = display::get_current_resolution()?;
+        let original = display::current_mode()?;
         let _restore = RestoreDisplay(original);
         let config = Config {
             stretch: Profile::new(1280, 960),
@@ -765,26 +730,26 @@ mod tests {
             app.error
         );
         anyhow::ensure!(
-            display::get_current_resolution()?.matches_profile(&config.stretch),
+            display::current_mode()?.matches_profile(&config.stretch),
             "automatic stretch did not reach the primary display"
         );
-        let applied = display::get_current_resolution()?;
+        let applied = display::current_mode()?;
         app.activity = GameActivity::Background;
         app.run_auto();
         anyhow::ensure!(
-            display::get_current_resolution()? == applied,
+            display::current_mode()? == applied,
             "default Alt+Tab changed the resolution"
         );
         app.activity = GameActivity::Focused;
         app.run_auto();
         anyhow::ensure!(
-            display::get_current_resolution()? == applied,
+            display::current_mode()? == applied,
             "default return from Alt+Tab changed the resolution"
         );
         app.activity = GameActivity::Stopped;
         app.run_auto();
         anyhow::ensure!(
-            display::get_current_resolution()? == original,
+            display::current_mode()? == original,
             "game exit did not restore the desktop"
         );
 
@@ -798,7 +763,7 @@ mod tests {
         app.activity = GameActivity::Background;
         app.run_auto();
         anyhow::ensure!(
-            display::get_current_resolution()? == original,
+            display::current_mode()? == original,
             "opted-in Alt+Tab did not restore the desktop"
         );
         app.handle(Command::RestoreOnAltTab)?;
@@ -820,13 +785,13 @@ mod tests {
             "automatic toggle did not persist"
         );
         anyhow::ensure!(
-            display::get_current_resolution()? == original,
+            display::current_mode()? == original,
             "disabling automatic mode did not restore the desktop"
         );
 
         app.handle(Command::AutoStretch)?;
         anyhow::ensure!(
-            display::get_current_resolution()?.matches_profile(&config.stretch),
+            display::current_mode()?.matches_profile(&config.stretch),
             "reenabling automatic mode did not apply stretch"
         );
         anyhow::ensure!(
@@ -834,7 +799,7 @@ mod tests {
             "Exit did not finish the automatic session"
         );
         anyhow::ensure!(
-            display::get_current_resolution()? == original,
+            display::current_mode()? == original,
             "Exit did not restore the desktop"
         );
         // The player may already be using 1440x1080. Pick a different size so
@@ -848,13 +813,13 @@ mod tests {
         app.handle(Command::Stretch)?;
         app.refresh_display();
         app.sync_menu();
-        let manual_current = display::get_current_resolution()?;
+        let manual_current = display::current_mode()?;
         anyhow::ensure!(
             manual_current.matches_profile(&app.config.stretch)
                 && app.menu.stretch.is_checked()
                 && !app.menu.native.is_checked(),
             "manual stretch did not reach the display and menu: current={manual_current:?}, restore={original:?}, native={:?}, stretch_checked={}, native_checked={}",
-            app.native,
+            app.display.native,
             app.menu.stretch.is_checked(),
             app.menu.native.is_checked()
         );
@@ -862,7 +827,7 @@ mod tests {
         app.refresh_display();
         app.sync_menu();
         anyhow::ensure!(
-            display::get_current_resolution()? == original && app.menu.native.is_checked(),
+            display::current_mode()? == original && app.menu.native.is_checked(),
             "manual Native did not restore the display and menu"
         );
         println!(
@@ -896,7 +861,7 @@ mod tests {
             initial.hotkey == "Ctrl+Alt+S" && initial.hotkey_enabled,
             "first-run config did not enable Ctrl+Alt+S hotkey"
         );
-        let original = display::get_current_resolution()?;
+        let original = display::current_mode()?;
         // A native override equal to the active desktop makes preset selection
         // a save-only operation even if the test machine is already stretched.
         let config = Config {
@@ -1062,7 +1027,7 @@ mod tests {
             "Exit did not close the app"
         );
         anyhow::ensure!(
-            display::get_current_resolution()? == original,
+            display::current_mode()? == original,
             "save-only menu actions changed the display"
         );
         println!(
@@ -1085,10 +1050,24 @@ mod tests {
             height: 1080,
             refresh: 180,
         };
-        menu.sync(&config, Some(native), Some(native), Some(native));
+        menu.sync(
+            &config,
+            &DisplayState {
+                current: Some(native),
+                panel: Some(native),
+                native: Some(native),
+            },
+        );
         assert!(menu.native.is_checked());
         assert!(!menu.stretch.is_checked());
-        menu.sync(&config, Some(stretch), Some(native), Some(native));
+        menu.sync(
+            &config,
+            &DisplayState {
+                current: Some(stretch),
+                panel: Some(native),
+                native: Some(native),
+            },
+        );
         assert!(!menu.native.is_checked());
         assert!(menu.stretch.is_checked());
         assert_eq!(
@@ -1098,7 +1077,14 @@ mod tests {
                 .count(),
             1
         );
-        menu.sync(&config, None, Some(native), Some(native));
+        menu.sync(
+            &config,
+            &DisplayState {
+                current: None,
+                panel: Some(native),
+                native: Some(native),
+            },
+        );
         assert!(!menu.native.is_checked());
         assert!(!menu.stretch.is_checked());
     }
@@ -1123,7 +1109,14 @@ mod tests {
             hotkey_enabled: false,
             ..Config::default()
         };
-        menu.sync(&disabled, None, None, None);
+        menu.sync(
+            &disabled,
+            &DisplayState {
+                current: None,
+                panel: None,
+                native: None,
+            },
+        );
         assert!(!menu.hotkey_enabled.is_checked());
         assert_eq!(menu.toggle.text(), "Toggle mode");
         assert_eq!(toggle_label(&disabled), "Toggle mode");
@@ -1132,7 +1125,14 @@ mod tests {
             hotkey: "Ctrl+Shift+F9".into(),
             ..Config::default()
         };
-        menu.sync(&custom, None, None, None);
+        menu.sync(
+            &custom,
+            &DisplayState {
+                current: None,
+                panel: None,
+                native: None,
+            },
+        );
         assert_eq!(menu_caption(root, 3), "Toggle mode\tCtrl+Shift+F9");
     }
 

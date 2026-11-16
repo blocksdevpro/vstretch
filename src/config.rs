@@ -497,6 +497,14 @@ impl Config {
     }
 
     /// Enables or disables the global hotkey and persists the choice.
+    /// The automatic-switching settings the auto-stretch state machine follows.
+    pub fn auto_policy(&self) -> crate::autostretch::AutoPolicy {
+        crate::autostretch::AutoPolicy {
+            enabled: self.auto_stretch,
+            restore_on_alt_tab: self.restore_on_alt_tab,
+        }
+    }
+
     pub fn set_hotkey_enabled(&mut self, enabled: bool) -> Result<()> {
         self.update_and_save(|next| next.hotkey_enabled = enabled)
     }

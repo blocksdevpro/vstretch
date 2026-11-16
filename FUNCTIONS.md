@@ -121,7 +121,7 @@ Entries: tray **Stretch**, or TUI action `2` / **Apply stretch**. Handlers: `Com
 Choose Stretch
 ├─ Read the saved stretch width and height
 ├─ Choose refresh: explicit stretch Hz, otherwise panel → native → 60 Hz
-├─ Request full-screen stretch scaling through display::apply_profile
+├─ Request full-screen stretch scaling through display::apply_stretch
 └─ Apply through the recovery journal and update the interface
 ```
 
@@ -491,7 +491,7 @@ The TUI calls the same verification and replacement functions as the CLI. A disc
 
 ## Shared display execution
 
-Source: [display.rs](src/display.rs) and [recovery.rs](src/recovery.rs).
+Source: [display/mod.rs](src/display/mod.rs), [display/win32.rs](src/display/win32.rs), and [recovery.rs](src/recovery.rs).
 
 ### Apply a temporary mode
 
@@ -510,7 +510,7 @@ flowchart TD
     Restored -->|No| Applied[Save Applied record with actual mode]
 ```
 
-`display::apply_profile` requests full-screen scaling. `display::change_resolution` requests a mode without an explicit new scaling value. When the request returns to the recorded desktop, recovery supplies the captured scaling value if known.
+`display::apply_stretch` requests full-screen scaling. `display::change_mode` requests a mode without an explicit new scaling value. When the request returns to the recorded desktop, recovery supplies the captured scaling value if known.
 
 `recovery::change` keeps the original desktop snapshot across successive changes while the journal still matches the current monitor and mode. Failure to publish the Prepared record prevents the Windows call. A Windows apply or later verification/write failure leaves recovery information available.
 
@@ -591,7 +591,7 @@ Source: [config.rs](src/config.rs).
 
 ### Display discovery and rules
 
-Source: [display.rs](src/display.rs).
+Source: [display/mod.rs](src/display/mod.rs) for modes and rules, and [display/win32.rs](src/display/win32.rs) for the Windows calls.
 
 | Function | Responsibility |
 | --- | --- |
@@ -599,20 +599,23 @@ Source: [display.rs](src/display.rs).
 | `Mode::size_eq` | Compare width and height, ignoring refresh. |
 | `Mode::matches_profile` | Match dimensions and also refresh when the profile specifies it. |
 | `DesktopSnapshot::matches_settings` | Match exact mode and any requested scaling; unknown scaling cannot satisfy an explicit request. |
-| `display::get_current_resolution` | Read the active primary desktop mode through GDI. |
-| `display::get_saved_resolution` | Read the Windows display default saved in the registry. |
-| `display::get_native_resolution` / `primary_display_name` | Match the primary GDI source to its active CCD target signal and read dimensions and Hz. |
+| `DisplayState::read` | Read current, panel, and effective Native modes in one poll; the tray, TUI, and `--auto` share it. |
+| `DisplayState::kind` / `native` / `stretch_refresh` | Classify the current mode, require a Native target, and choose stretch Hz from one reading. |
+| `DisplayState::apply_stretch` / `restore_native` / `toggle` | Run the Stretch, Native, and Toggle actions against that reading. |
+| `display::current_mode` | Read the active primary desktop mode through GDI. |
+| `display::saved_mode` | Read the Windows display default saved in the registry. |
+| `display::panel_mode` / `primary_display_name` | Match the primary GDI source to its active CCD target signal and read dimensions and Hz. |
 | `display::desktop_snapshot` | Capture primary monitor identity, active mode, and reported fixed-output scaling. |
-| `display::list_display_modes` | Enumerate, deduplicate, and sort reported modes by descending height, width, then Hz. |
+| `display::available_modes` | Enumerate, deduplicate, and sort reported modes by descending height, width, then Hz. |
 | `display::resolve_native` / `display::native_override_mode` | Choose an override or panel signal; override Hz falls back to panel Hz, then 60. |
 | `display::stretch_refresh` | Choose panel Hz, then effective Native Hz, then 60, before an explicit stretch refresh override. |
 | `display::preferred_override_mode` | Find the native picker row for an override, preferring its specified Hz or panel Hz, then the highest match. |
 | `display::classify_mode` | Classify dimensions in order: Native, Stretch, Panel, Other; unreadable current mode is Unknown. |
 | `display::toggle_stretch` | Apply Stretch if dimensions match Native; otherwise restore Native. |
-| `display::apply_profile` | Construct the stretch mode, request stretch scaling, and return the requested mode after success. |
-| `display::change_resolution` / `change_resolution_with_scaling` | Route a temporary mode request through recovery. |
+| `display::apply_stretch` | Construct the stretch mode, request stretch scaling, and return the requested mode after success. |
+| `display::change_mode` | Route a temporary mode request through recovery. |
 | `display::restore_native` | Route explicit Native restoration and legacy default repair through recovery. |
-| `display::apply_display_settings` / `resolution_devmode` / `check_display_change` | Build the Windows request, call `ChangeDisplaySettingsExW`, and translate its result into success or a mode-specific error. |
+| `display::apply_mode` / `resolution_devmode` / `check_display_change` | Build the Windows request, call `ChangeDisplaySettingsExW`, and translate its result into success or a mode-specific error. |
 
 Native detection reads the panel's active output signal, rather than treating a stretched desktop size as native. Mode classification ignores refresh; recovery ownership and automatic ownership compare complete `Mode` values, including refresh.
 

@@ -22,7 +22,7 @@ use ratatui::{
 };
 
 use crate::config::{Config, POPULAR_STRETCH};
-use crate::display::{self, Mode, ModeKind};
+use crate::display::{self, DisplayState, Mode, ModeKind};
 use crate::update::{self, Release};
 
 type UpdateResult<T> = Receiver<std::result::Result<T, String>>;
@@ -83,9 +83,7 @@ struct App {
     native_state: ListState,
     native_modes: Vec<Mode>,
     config: Config,
-    current: Option<Mode>,
-    panel: Option<Mode>,
-    native: Option<Mode>,
+    display: DisplayState,
     status: String,
     status_ok: bool,
     should_quit: bool,
@@ -120,9 +118,7 @@ impl App {
             native_state,
             native_modes: Vec::new(),
             config,
-            current: None,
-            panel: None,
-            native: None,
+            display: DisplayState::default(),
             status: "Ready — pick an action".into(),
             status_ok: true,
             should_quit: false,
@@ -134,9 +130,7 @@ impl App {
     }
 
     fn refresh_display(&mut self) {
-        self.current = display::get_current_resolution().ok();
-        self.panel = display::get_native_resolution().ok();
-        self.native = display::resolve_native(self.config.native.as_ref(), self.panel).ok();
+        self.display = DisplayState::read(self.config.native.as_ref());
     }
 
     fn set_ok(&mut self, msg: impl Into<String>) {
@@ -154,12 +148,7 @@ impl App {
     }
 
     fn mode_label(&self) -> (&'static str, Color) {
-        match display::classify_mode(
-            self.current,
-            self.native,
-            self.panel,
-            Some(&self.config.stretch),
-        ) {
+        match self.display.kind(&self.config.stretch) {
             ModeKind::Native => ("NATIVE", Color::Cyan),
             ModeKind::Stretch => ("STRETCH", Color::Magenta),
             ModeKind::Panel => ("PANEL", Color::Blue),
@@ -169,23 +158,18 @@ impl App {
     }
 
     fn effective_native(&self) -> Result<Mode> {
-        self.native.context("could not resolve native resolution")
+        self.display
+            .native
+            .context("could not resolve native resolution")
     }
 
     fn run_toggle(&mut self) {
-        let native = match self.effective_native() {
-            Ok(n) => n,
-            Err(e) => {
-                self.set_err(format!("Could not read native: {e}"));
-                return;
-            }
-        };
+        if let Err(e) = self.effective_native() {
+            self.set_err(format!("Could not read native: {e}"));
+            return;
+        }
         let name = self.config.stretch.name();
-        match display::toggle_stretch(
-            &self.config.stretch,
-            native,
-            display::stretch_refresh(self.panel, Some(native)),
-        ) {
+        match self.display.toggle(&self.config.stretch) {
             Ok(mode) => {
                 self.set_ok(format!("Toggled → {}  [{name}]", mode.label()));
                 self.refresh_display();
@@ -196,8 +180,7 @@ impl App {
 
     fn run_stretch(&mut self) {
         let name = self.config.stretch.name();
-        let refresh = display::stretch_refresh(self.panel, self.native);
-        match display::apply_profile(&self.config.stretch, refresh) {
+        match self.display.apply_stretch(&self.config.stretch) {
             Ok(mode) => {
                 self.set_ok(format!("Stretch → {}  [{name}]", mode.label()));
                 self.refresh_display();
@@ -207,15 +190,16 @@ impl App {
     }
 
     fn run_native(&mut self) {
-        match self.effective_native() {
-            Ok(native) => match display::restore_native(native, &self.config.stretch) {
-                Ok(()) => {
-                    self.set_ok(format!("Native → {}", native.label()));
-                    self.refresh_display();
-                }
-                Err(e) => self.set_err(format!("Native failed: {e}")),
-            },
-            Err(e) => self.set_err(format!("Could not read native: {e}")),
+        if let Err(e) = self.effective_native() {
+            self.set_err(format!("Could not read native: {e}"));
+            return;
+        }
+        match self.display.restore_native(&self.config.stretch) {
+            Ok(native) => {
+                self.set_ok(format!("Native → {}", native.label()));
+                self.refresh_display();
+            }
+            Err(e) => self.set_err(format!("Native failed: {e}")),
         }
     }
 
@@ -224,19 +208,22 @@ impl App {
     }
 
     fn open_native_picker(&mut self) {
-        self.native_modes = display::list_display_modes();
+        self.native_modes = display::available_modes();
         if let Some(over) = &self.config.native
-            && display::preferred_override_mode(&self.native_modes, over, self.panel).is_none()
+            && display::preferred_override_mode(&self.native_modes, over, self.display.panel)
+                .is_none()
         {
             self.native_modes
-                .insert(0, display::native_override_mode(over, self.panel));
+                .insert(0, display::native_override_mode(over, self.display.panel));
         }
         let idx = match &self.config.native {
             None => 0,
-            Some(over) => display::preferred_override_mode(&self.native_modes, over, self.panel)
-                .and_then(|pref| self.native_modes.iter().position(|m| *m == pref))
-                .map(|i| i + 1)
-                .unwrap_or(0),
+            Some(over) => {
+                display::preferred_override_mode(&self.native_modes, over, self.display.panel)
+                    .and_then(|pref| self.native_modes.iter().position(|m| *m == pref))
+                    .map(|i| i + 1)
+                    .unwrap_or(0)
+            }
         };
         self.native_state.select(Some(idx));
         self.screen = Screen::Native;
@@ -249,6 +236,7 @@ impl App {
                 Ok(()) => {
                     self.refresh_display();
                     let label = self
+                        .display
                         .panel
                         .map(Mode::label)
                         .unwrap_or_else(|| "panel".into());
@@ -613,8 +601,12 @@ fn draw_update_confirmation(f: &mut Frame, app: &App) {
 
 fn draw_status_panel(f: &mut Frame, app: &App, area: Rect) {
     let (mode_name, mode_color) = app.mode_label();
-    let current = app.current.map(Mode::label).unwrap_or_else(|| "—".into());
-    let native = match app.native {
+    let current = app
+        .display
+        .current
+        .map(Mode::label)
+        .unwrap_or_else(|| "—".into());
+    let native = match app.display.native {
         Some(n) => {
             let src = if app.config.native.is_some() {
                 "set"
@@ -754,18 +746,17 @@ fn draw_native_modes(f: &mut Frame, app: &mut App, area: Rect) {
     let mut items = Vec::with_capacity(app.native_choice_len());
 
     let auto_is_default = app.config.native.is_none();
-    let starred = app
-        .config
-        .native
-        .as_ref()
-        .and_then(|n| display::preferred_override_mode(&app.native_modes, n, app.panel));
+    let starred =
+        app.config.native.as_ref().and_then(|n| {
+            display::preferred_override_mode(&app.native_modes, n, app.display.panel)
+        });
     let mut auto_spans = vec![Span::styled(
         "Auto (panel native)",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
     )];
-    if let Some(panel) = app.panel {
+    if let Some(panel) = app.display.panel {
         auto_spans.push(Span::styled(
             format!("    {}", panel.label()),
             Style::default().fg(Color::DarkGray),
@@ -796,11 +787,12 @@ fn draw_native_modes(f: &mut Frame, app: &mut App, area: Rect) {
             ),
         ];
         if app
+            .display
             .panel
             .is_some_and(|p| p.size_eq(*mode) && p.refresh == mode.refresh)
         {
             spans.push(Span::styled("    panel", Style::default().fg(Color::Cyan)));
-        } else if app.current.is_some_and(|c| c == *mode) {
+        } else if app.display.current.is_some_and(|c| c == *mode) {
             spans.push(Span::styled("    now", Style::default().fg(Color::Magenta)));
         }
         if is_default {
@@ -877,9 +869,7 @@ mod tests {
             native_state: ListState::default(),
             native_modes: Vec::new(),
             config: Config::default(),
-            current: None,
-            panel: None,
-            native: None,
+            display: DisplayState::default(),
             status: "Ready".into(),
             status_ok: true,
             should_quit: false,

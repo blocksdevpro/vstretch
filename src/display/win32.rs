@@ -1,9 +1,11 @@
-//! Queries and changes the primary display through the Windows display APIs.
+//! Raw Windows calls that read and change the primary display.
+//!
+//! Everything here talks to GDI or CCD directly. Policy (which mode to apply,
+//! crash recovery) lives in the parent module and in `recovery`.
 
 use std::mem;
 
-use anyhow::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
+use anyhow::{Result, bail};
 use windows::{
     Win32::{
         Devices::Display::{
@@ -28,34 +30,10 @@ use windows::{
     core::{Error as WinError, PCWSTR},
 };
 
-use crate::config::Profile;
+use super::{DesktopSnapshot, FALLBACK_REFRESH_HZ, Mode};
 
-/// Last-resort Hz when CCD and the profile both omit refresh.
-pub const FALLBACK_REFRESH_HZ: u32 = 60;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Mode {
-    pub width: u32,
-    pub height: u32,
-    pub refresh: u32,
-}
-
-/// The monitor identity and settings needed to recover an interrupted session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DesktopSnapshot {
-    pub monitor: String,
-    pub mode: Mode,
-    pub scaling: Option<u32>,
-}
-
-impl DesktopSnapshot {
-    /// Unknown scaling cannot prove that an explicit scaling request is active.
-    pub(crate) fn matches_settings(&self, mode: Mode, scaling: Option<u32>) -> bool {
-        self.mode == mode && scaling.is_none_or(|value| self.scaling == Some(value))
-    }
-}
+/// Full-screen scaling, so 4:3 modes fill a 16:9 panel instead of leaving bars.
+pub(super) const STRETCH_SCALING: u32 = DMDFO_STRETCH.0;
 
 fn mode_from_devmode(devmode: &DEVMODEW) -> Mode {
     Mode {
@@ -65,6 +43,7 @@ fn mode_from_devmode(devmode: &DEVMODEW) -> Mode {
     }
 }
 
+/// Identifies the primary monitor and its exact settings for crash recovery.
 pub fn desktop_snapshot() -> Result<DesktopSnapshot> {
     let name = primary_display_name()?;
     let mut monitors = Vec::new();
@@ -126,7 +105,8 @@ pub fn desktop_snapshot() -> Result<DesktopSnapshot> {
     })
 }
 
-pub fn get_saved_resolution() -> Result<Mode> {
+/// The mode Windows restores at sign-in, from the registry.
+pub fn saved_mode() -> Result<Mode> {
     let mut devmode = empty_devmode();
     // SAFETY: dmSize describes the writable output buffer.
     anyhow::ensure!(
@@ -136,31 +116,6 @@ pub fn get_saved_resolution() -> Result<Mode> {
     Ok(mode_from_devmode(&devmode))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModeKind {
-    Native,
-    Stretch,
-    Panel,
-    Other,
-    Unknown,
-}
-
-impl Mode {
-    pub fn label(self) -> String {
-        format!("{}x{} @ {}Hz", self.width, self.height, self.refresh)
-    }
-
-    pub fn size_eq(self, other: Mode) -> bool {
-        self.width == other.width && self.height == other.height
-    }
-
-    pub fn matches_profile(self, p: &Profile) -> bool {
-        self.width == p.width
-            && self.height == p.height
-            && p.refresh.is_none_or(|r| r == self.refresh)
-    }
-}
-
 fn empty_devmode() -> DEVMODEW {
     DEVMODEW {
         dmSize: mem::size_of::<DEVMODEW>() as u16,
@@ -168,24 +123,18 @@ fn empty_devmode() -> DEVMODEW {
     }
 }
 
-pub fn get_current_resolution() -> Result<Mode> {
+/// The primary display's active desktop mode.
+pub fn current_mode() -> Result<Mode> {
     let mut devmode = empty_devmode();
     // SAFETY: dmSize describes the writable DEVMODEW passed to Windows.
-    let result = unsafe { EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut devmode) };
-
-    if result.as_bool() {
-        Ok(Mode {
-            width: devmode.dmPelsWidth,
-            height: devmode.dmPelsHeight,
-            refresh: devmode.dmDisplayFrequency,
-        })
-    } else {
-        bail!("Windows could not read the primary display's current resolution")
+    if !unsafe { EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut devmode) }.as_bool() {
+        bail!("Windows could not read the primary display's current resolution");
     }
+    Ok(mode_from_devmode(&devmode))
 }
 
 /// Unique width×height@Hz modes Windows reports for the primary display.
-pub fn list_display_modes() -> Vec<Mode> {
+pub fn available_modes() -> Vec<Mode> {
     use std::collections::BTreeSet;
 
     let mut seen = BTreeSet::new();
@@ -245,7 +194,9 @@ fn primary_display_name() -> Result<[u16; 32]> {
 }
 
 /// Reads the primary panel's output signal rather than the scaled desktop size.
-pub fn get_native_resolution() -> Result<Mode> {
+///
+/// This is the panel's real resolution even while a stretch mode is active.
+pub fn panel_mode() -> Result<Mode> {
     let primary_name = primary_display_name()?;
     let mut path_count = 0u32;
     let mut mode_count = 0u32;
@@ -364,27 +315,9 @@ fn check_display_change(result: DISP_CHANGE, mode: Mode) -> Result<()> {
     bail!("{}: {reason} (DISP_CHANGE {})", mode.label(), result.0)
 }
 
-pub fn change_resolution(mode: Mode) -> Result<()> {
-    change_resolution_with_scaling(mode, None)
-}
-
-fn change_resolution_with_scaling(
-    mode: Mode,
-    scaling: Option<DEVMODE_DISPLAY_FIXED_OUTPUT>,
-) -> Result<()> {
-    crate::recovery::change(mode, scaling.map(|value| value.0))
-}
-
-/// Only an explicit Native choice repairs a stretch default saved by old versions.
-pub fn restore_native(mode: Mode, stretch: &Profile) -> Result<()> {
-    crate::recovery::restore_native(mode, stretch)
-}
-
-pub(crate) fn apply_display_settings(
-    mode: Mode,
-    scaling: Option<u32>,
-    save_default: bool,
-) -> Result<()> {
+/// Applies a mode to the primary display. Callers go through `recovery` so the
+/// change is journaled first.
+pub fn apply_mode(mode: Mode, scaling: Option<u32>, save_default: bool) -> Result<()> {
     let scaling = scaling.map(DEVMODE_DISPLAY_FIXED_OUTPUT);
     let devmode = resolution_devmode(mode, scaling);
     let flags = if save_default {
@@ -398,116 +331,19 @@ pub(crate) fn apply_display_settings(
     check_display_change(result, mode)
 }
 
-pub fn apply_profile(profile: &Profile, panel_refresh: u32) -> Result<Mode> {
-    let mode = Mode {
-        width: profile.width,
-        height: profile.height,
-        refresh: profile.refresh.unwrap_or(panel_refresh),
-    };
-    // A 4:3 resolution alone can preserve its aspect ratio and leave side bars.
-    change_resolution_with_scaling(mode, Some(DMDFO_STRETCH))?;
-    Ok(mode)
-}
-
-/// Restore target: saved override if set, otherwise the already-detected panel.
-pub fn resolve_native(override_profile: Option<&Profile>, panel: Option<Mode>) -> Result<Mode> {
-    match override_profile {
-        Some(profile) => Ok(native_override_mode(profile, panel)),
-        None => panel.context("could not detect panel native resolution"),
-    }
-}
-
-pub fn stretch_refresh(panel: Option<Mode>, native: Option<Mode>) -> u32 {
-    panel
-        .map(|p| p.refresh)
-        .or(native.map(|n| n.refresh))
-        .unwrap_or(FALLBACK_REFRESH_HZ)
-}
-
-/// `native` is the desktop restore target. Stretch uses `panel_refresh`, not the override Hz.
-pub fn toggle_stretch(profile: &Profile, native: Mode, panel_refresh: u32) -> Result<Mode> {
-    let current = get_current_resolution()?;
-
-    if current.size_eq(native) {
-        apply_profile(profile, panel_refresh)
-    } else {
-        restore_native(native, profile)?;
-        Ok(native)
-    }
-}
-
-/// The single list row that represents a saved native override.
-pub fn preferred_override_mode(
-    modes: &[Mode],
-    override_profile: &Profile,
-    panel: Option<Mode>,
-) -> Option<Mode> {
-    if override_profile.refresh.is_some() {
-        return modes
-            .iter()
-            .copied()
-            .find(|mode| mode.matches_profile(override_profile));
-    }
-    if let Some(panel) = panel
-        && let Some(mode) = modes
-            .iter()
-            .copied()
-            .find(|mode| mode.matches_profile(override_profile) && mode.refresh == panel.refresh)
-    {
-        return Some(mode);
-    }
-    modes
-        .iter()
-        .copied()
-        .filter(|mode| mode.matches_profile(override_profile))
-        .max_by_key(|mode| mode.refresh)
-}
-
-/// Uses the panel refresh rate when the saved override leaves it unspecified.
-pub fn native_override_mode(override_profile: &Profile, panel: Option<Mode>) -> Mode {
-    Mode {
-        width: override_profile.width,
-        height: override_profile.height,
-        refresh: override_profile
-            .refresh
-            .or(panel.map(|p| p.refresh))
-            .unwrap_or(FALLBACK_REFRESH_HZ),
-    }
-}
-
-pub fn classify_mode(
-    current: Option<Mode>,
-    native: Option<Mode>,
-    panel: Option<Mode>,
-    stretch: Option<&Profile>,
-) -> ModeKind {
-    let Some(current) = current else {
-        return ModeKind::Unknown;
-    };
-    if native.is_some_and(|n| current.size_eq(n)) {
-        return ModeKind::Native;
-    }
-    if stretch.is_some_and(|p| current.width == p.width && current.height == p.height) {
-        return ModeKind::Stretch;
-    }
-    if panel.is_some_and(|p| current.size_eq(p)) {
-        return ModeKind::Panel;
-    }
-    ModeKind::Other
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Profile;
+    use crate::{config::Profile, display};
+    use anyhow::Context;
 
     #[test]
     fn recovery_snapshot_identifies_the_real_primary_monitor() -> Result<()> {
         let snapshot = desktop_snapshot()?;
         assert!(!snapshot.monitor.is_empty());
-        assert_eq!(snapshot.mode, get_current_resolution()?);
+        assert_eq!(snapshot.mode, current_mode()?);
         assert!(snapshot.scaling.is_none_or(|value| value <= 2));
-        let saved = get_saved_resolution()?;
+        let saved = saved_mode()?;
         assert!(saved.width > 0 && saved.height > 0 && saved.refresh > 0);
         Ok(())
     }
@@ -517,20 +353,24 @@ mod tests {
     fn primary_stretch_mode_passes_driver_validation() -> Result<()> {
         use windows::Win32::Graphics::Gdi::CDS_TEST;
 
-        let current = get_current_resolution()?;
-        let panel = get_native_resolution()?;
-        let stretch = mode(1280, 960, stretch_refresh(Some(panel), Some(current)));
+        let current = current_mode()?;
+        let panel = panel_mode()?;
+        let stretch = mode(
+            1280,
+            960,
+            display::stretch_refresh(Some(panel), Some(current)),
+        );
         println!(
             "Current: {}; primary panel: {}",
             current.label(),
             panel.label()
         );
-        assert!(list_display_modes().contains(&stretch));
+        assert!(available_modes().contains(&stretch));
         let devmode = resolution_devmode(stretch, Some(DMDFO_STRETCH));
         let result =
             unsafe { ChangeDisplaySettingsExW(None, Some(&devmode), None, CDS_TEST, None) };
         check_display_change(result, stretch)?;
-        assert_eq!(get_current_resolution()?, current);
+        assert_eq!(current_mode()?, current);
         println!("Driver accepts {}", stretch.label());
         Ok(())
     }
@@ -538,20 +378,17 @@ mod tests {
     #[test]
     #[ignore = "tests 1280x960 and 1440x1080 full-screen scaling, restoring the original mode"]
     fn primary_stretch_toggle_round_trip() -> Result<()> {
-        let original = get_current_resolution()?;
-        let panel = get_native_resolution()?;
-        let refresh = stretch_refresh(Some(panel), Some(original));
+        let original = current_mode()?;
+        let panel = panel_mode()?;
+        let refresh = display::stretch_refresh(Some(panel), Some(original));
         let result = (|| -> Result<()> {
             for profile in [Profile::new(1280, 960), Profile::new(1440, 1080)] {
-                let applied = toggle_stretch(&profile, original, refresh)?;
+                let applied = display::toggle_stretch(&profile, original, refresh)?;
                 anyhow::ensure!(
                     applied.matches_profile(&profile),
                     "toggle did not select stretch"
                 );
-                anyhow::ensure!(
-                    get_current_resolution()? == applied,
-                    "stretch was not applied"
-                );
+                anyhow::ensure!(current_mode()? == applied, "stretch was not applied");
                 let mut active = empty_devmode();
                 anyhow::ensure!(
                     unsafe { EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS, &mut active) }
@@ -563,18 +400,15 @@ mod tests {
                     "driver did not apply full-screen stretch scaling"
                 );
                 println!("Applied {} with full-screen scaling", applied.label());
-                let restored = toggle_stretch(&profile, original, refresh)?;
+                let restored = display::toggle_stretch(&profile, original, refresh)?;
                 anyhow::ensure!(restored == original, "toggle did not select native");
-                anyhow::ensure!(
-                    get_current_resolution()? == original,
-                    "native was not restored"
-                );
+                anyhow::ensure!(current_mode()? == original, "native was not restored");
                 println!("Restored {}", original.label());
             }
             Ok(())
         })();
         // Restore even if applying or verifying either half of the toggle fails.
-        change_resolution(original).context("restore original display after test")?;
+        display::change_mode(original).context("restore original display after test")?;
         result
     }
 
@@ -616,132 +450,5 @@ mod tests {
             );
             assert!(!message.contains("completed successfully"), "{message}");
         }
-    }
-
-    #[test]
-    fn matches_profile_ignores_refresh_when_unset() {
-        let p = Profile::new(1920, 1080);
-        assert!(mode(1920, 1080, 60).matches_profile(&p));
-        assert!(mode(1920, 1080, 180).matches_profile(&p));
-        assert!(!mode(2560, 1440, 180).matches_profile(&p));
-    }
-
-    #[test]
-    fn matches_profile_requires_refresh_when_set() {
-        let p = Profile {
-            width: 1920,
-            height: 1080,
-            refresh: Some(180),
-        };
-        assert!(mode(1920, 1080, 180).matches_profile(&p));
-        assert!(!mode(1920, 1080, 60).matches_profile(&p));
-    }
-
-    #[test]
-    fn preferred_override_stars_panel_hz_when_refresh_omitted() {
-        let modes = [
-            mode(1920, 1080, 180),
-            mode(1920, 1080, 60),
-            mode(2560, 1440, 180),
-        ];
-        let over = Profile::new(1920, 1080);
-        let panel = mode(2560, 1440, 180);
-        assert_eq!(
-            preferred_override_mode(&modes, &over, Some(panel)),
-            Some(mode(1920, 1080, 180))
-        );
-    }
-
-    #[test]
-    fn preferred_override_uses_saved_refresh() {
-        let modes = [mode(1920, 1080, 180), mode(1920, 1080, 60)];
-        let over = Profile {
-            width: 1920,
-            height: 1080,
-            refresh: Some(60),
-        };
-        assert_eq!(
-            preferred_override_mode(&modes, &over, None),
-            Some(mode(1920, 1080, 60))
-        );
-    }
-
-    #[test]
-    fn preferred_override_falls_back_to_highest_hz() {
-        // Driver or saved-mode ordering should not determine the chosen refresh rate.
-        let modes = [
-            mode(1920, 1080, 60),
-            mode(1920, 1080, 144),
-            mode(1920, 1080, 120),
-        ];
-        let over = Profile::new(1920, 1080);
-        assert_eq!(
-            preferred_override_mode(&modes, &over, Some(mode(2560, 1440, 240))),
-            Some(mode(1920, 1080, 144))
-        );
-    }
-
-    #[test]
-    fn resolve_native_override_keeps_panel_refresh_when_omitted() {
-        let over = Profile::new(1920, 1080);
-        let panel = mode(2560, 1440, 180);
-        assert_eq!(
-            resolve_native(Some(&over), Some(panel)).unwrap(),
-            mode(1920, 1080, 180)
-        );
-    }
-
-    #[test]
-    fn resolve_native_without_override_is_panel() {
-        let panel = mode(2560, 1440, 180);
-        assert_eq!(resolve_native(None, Some(panel)).unwrap(), panel);
-        assert!(resolve_native(None, None).is_err());
-    }
-
-    #[test]
-    fn classify_native_stretch_panel_other() {
-        let panel = mode(2560, 1440, 180);
-        let native = mode(1920, 1080, 180);
-        let stretch = Profile::new(1440, 1080);
-        assert_eq!(
-            classify_mode(Some(native), Some(native), Some(panel), Some(&stretch)),
-            ModeKind::Native
-        );
-        assert_eq!(
-            classify_mode(
-                Some(mode(1440, 1080, 180)),
-                Some(native),
-                Some(panel),
-                Some(&stretch)
-            ),
-            ModeKind::Stretch
-        );
-        assert_eq!(
-            classify_mode(Some(panel), Some(native), Some(panel), Some(&stretch)),
-            ModeKind::Panel
-        );
-        assert_eq!(
-            classify_mode(
-                Some(mode(1280, 960, 60)),
-                Some(native),
-                Some(panel),
-                Some(&stretch)
-            ),
-            ModeKind::Other
-        );
-        assert_eq!(
-            classify_mode(None, Some(native), Some(panel), Some(&stretch)),
-            ModeKind::Unknown
-        );
-    }
-
-    #[test]
-    fn classify_panel_as_native_when_no_override() {
-        let panel = mode(2560, 1440, 180);
-        let stretch = Profile::new(1440, 1080);
-        assert_eq!(
-            classify_mode(Some(panel), Some(panel), Some(panel), Some(&stretch)),
-            ModeKind::Native
-        );
     }
 }
