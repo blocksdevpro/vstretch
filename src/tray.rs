@@ -22,7 +22,7 @@ use windows::{
 
 use crate::{
     autostretch::{Action, AutoStretch, GameActivity},
-    config::{Config, POPULAR_STRETCH, Profile},
+    config::{Config, Profile, presets::POPULAR_STRETCH},
     display::{self, DisplayState, ModeKind},
     platform, startup,
     wake::{PowerWatcher, WakePlan, WakeRestore},
@@ -46,7 +46,7 @@ enum Command {
 
 fn toggle_label(config: &Config) -> String {
     if config.hotkey_enabled && !config.hotkey.trim().is_empty() {
-        match crate::config::canonical_hotkey(&config.hotkey) {
+        match crate::config::hotkey::canonical(&config.hotkey) {
             Ok(canonical) => format!("Toggle mode\t{canonical}"),
             Err(_) => format!("Toggle mode\t{}", config.hotkey.trim()),
         }
@@ -74,7 +74,7 @@ impl Hotkey {
             self.unregister();
             return None;
         }
-        let (modifiers, vk) = match crate::config::parse_hotkey(&config.hotkey) {
+        let (modifiers, vk) = match crate::config::hotkey::parse(&config.hotkey) {
             Ok(parsed) => parsed,
             Err(error) => {
                 self.unregister();
@@ -97,7 +97,7 @@ impl Hotkey {
                 None
             }
             Err(error) => {
-                let label = crate::config::canonical_hotkey(&config.hotkey)
+                let label = crate::config::hotkey::canonical(&config.hotkey)
                     .unwrap_or_else(|_| config.hotkey.trim().to_owned());
                 Some(format!(
                     "Hotkey '{label}' unavailable: {error:#} (in use? change or disable)"
@@ -276,7 +276,7 @@ impl TrayMenu {
             .set_checked(config.restore_on_alt_tab);
         self.hotkey_enabled.set_checked(config.hotkey_enabled);
         self.hotkey_enabled.set_text(
-            crate::config::canonical_hotkey(&config.hotkey)
+            crate::config::hotkey::canonical(&config.hotkey)
                 .map(|hotkey| format!("Enable hotkey\t{hotkey}"))
                 .unwrap_or_else(|_| "Enable hotkey".into()),
         );
@@ -509,20 +509,15 @@ impl App {
             }
             Command::Preset(profile) => {
                 let was_stretch = self.display.kind(&self.config.stretch) == ModeKind::Stretch;
-                let mut next = self.config.clone();
-                next.stretch = profile;
-                next.save_default_path()?;
-                self.config = next;
+                self.config.update_and_save(|next| next.stretch = profile)?;
                 if was_stretch {
                     self.display.apply_stretch(&self.config.stretch)?;
                     self.auto.manual_choice();
                 }
             }
             Command::AutoStretch => {
-                let mut next = self.config.clone();
-                next.auto_stretch = !next.auto_stretch;
-                next.save_default_path()?;
-                self.config = next;
+                self.config
+                    .update_and_save(|next| next.auto_stretch = !next.auto_stretch)?;
                 if self.config.auto_stretch
                     && matches!(self.auto, AutoStretch::PausedUntilSessionEnds)
                 {
@@ -531,18 +526,14 @@ impl App {
                 self.run_auto();
             }
             Command::RestoreOnAltTab => {
-                let mut next = self.config.clone();
-                next.restore_on_alt_tab = !next.restore_on_alt_tab;
-                next.save_default_path()?;
-                self.config = next;
+                self.config
+                    .update_and_save(|next| next.restore_on_alt_tab = !next.restore_on_alt_tab)?;
                 self.run_auto();
             }
             Command::Startup => {
                 let enabled = !startup::enabled()?;
-                let mut next = self.config.clone();
-                next.start_with_windows = Some(enabled);
-                next.save_default_path()?;
-                self.config = next;
+                self.config
+                    .update_and_save(|next| next.start_with_windows = Some(enabled))?;
                 startup::set_enabled(enabled)?;
             }
             Command::HotkeyEnabled => {

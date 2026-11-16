@@ -21,7 +21,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
-use crate::config::{Config, POPULAR_STRETCH};
+use crate::config::{Config, presets::POPULAR_STRETCH};
 use crate::display::{self, DisplayState, Mode, ModeKind};
 use crate::update::{self, Release};
 

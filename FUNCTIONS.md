@@ -161,7 +161,7 @@ This command runs once and skips update checks. If a running tray owns an automa
 
 ## Saved resolutions and configuration
 
-Source: [config.rs](src/config.rs), [tray.rs](src/tray.rs), and [tui.rs](src/tui.rs).
+Source: [config/mod.rs](src/config/mod.rs), [tray.rs](src/tray.rs), and [tui.rs](src/tui.rs).
 
 ### Choose a stretch preset
 
@@ -328,7 +328,7 @@ Timer tick
 
 ### Enable, disable, or change the global hotkey
 
-Entries: tray **Settings → Enable hotkey**, or edit `hotkey` in the configuration. Handler: `Command::HotkeyEnabled`. Source: `Hotkey::sync` in [tray.rs](src/tray.rs) and [config.rs](src/config.rs).
+Entries: tray **Settings → Enable hotkey**, or edit `hotkey` in the configuration. Handler: `Command::HotkeyEnabled`. Source: `Hotkey::sync` in [tray.rs](src/tray.rs) and [config/hotkey.rs](src/config/hotkey.rs).
 
 ```text
 Toggle Enable hotkey
@@ -568,7 +568,7 @@ These are the production functions shared by the user interfaces and the functio
 
 ### Profiles, configuration, and hotkeys
 
-Source: [config.rs](src/config.rs).
+Source: [config/mod.rs](src/config/mod.rs) for the settings file, [config/presets.rs](src/config/presets.rs) for built-in resolutions, [config/hotkey.rs](src/config/hotkey.rs) for hotkey text, and [config/legacy.rs](src/config/legacy.rs) for the old file format.
 
 | Function | Responsibility |
 | --- | --- |
@@ -579,15 +579,16 @@ Source: [config.rs](src/config.rs).
 | `Config::config_path` | Resolve the default configuration path or validate an absolute override. |
 | `Config::load` / `Config::load_from_path` | Read, parse, validate, and attempt legacy migration. Missing config is an error. |
 | `Config::load_or_init` | Load an existing file or save defaults when missing. |
-| `Config::validate` / `validate_profile` / `validate_hotkey` | Reject zero dimensions, zero explicit refresh, and invalid nonblank hotkeys. |
+| `Config::validate` / `validate_profile` / `hotkey::validate` | Reject zero dimensions, zero explicit refresh, and invalid nonblank hotkeys. |
 | `parse_config` / `Config::from` / `parse_res_name` | Convert a recognized legacy profile map into the current configuration. |
 | `Config::save` / `Config::save_default_path` | Validate, stage, flush, and replace a complete configuration file under a publication lock. |
-| `Config::update_and_save` | Save a proposed change before replacing the caller's in-memory configuration. |
+| `Config::update_and_save` | Save a proposed change before replacing the caller's in-memory configuration; tray toggles and the startup default use it. |
+| `Config::auto_policy` | Hand the auto-stretch and Alt+Tab settings to the automatic-switching state machine. |
 | `Config::set_stretch` | Save new stretch dimensions with refresh unset and return the name. |
 | `Config::set_native` / `Config::clear_native` | Save or remove the native override. |
 | `Config::set_hotkey_enabled` | Save the registration preference while preserving the combo text. |
-| `config::parse_hotkey` / `key_to_vk` | Convert a validated combination into Windows modifier bits and a virtual key. |
-| `config::canonical_hotkey` | Format a consistent hotkey label from the parsed combination. |
+| `config::hotkey::parse` / `key_to_vk` | Convert a validated combination into Windows modifier bits and a virtual key. |
+| `config::hotkey::canonical` | Format a consistent hotkey label from the parsed combination. |
 
 ### Display discovery and rules
 

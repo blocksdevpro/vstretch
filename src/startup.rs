@@ -17,11 +17,7 @@ pub fn initialize(config: &mut crate::config::Config) -> Result<()> {
         return Ok(());
     }
     set_enabled(true)?;
-    let mut next = config.clone();
-    next.start_with_windows = Some(true);
-    next.save_default_path()?;
-    *config = next;
-    Ok(())
+    config.update_and_save(|next| next.start_with_windows = Some(true))
 }
 
 fn command(executable: &Path) -> Result<String> {
