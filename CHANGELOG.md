@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Bring stretch back after the PC sleeps or its monitors turn off and on; Windows resets the display while resuming, which previously left the game on the native resolution until stretched again. An automatic session keeps its desktop restore target, and a game that ended during sleep is not stretched again
+
 ## [1.3.1] - 2026-10-08
 
 ### Changed

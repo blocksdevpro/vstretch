@@ -307,6 +307,23 @@ stateDiagram-v2
 
 `Paused` in the diagram is `AutoStretch::PausedUntilSessionEnds`. `Owned` holds the captured desktop and applied mode. `RestoreFailed` is also the state used while a restore is attempted. An apply that finds Stretch already active stays Paused and takes no automatic ownership.
 
+### Restore stretch after sleep or monitors turning off
+
+Entry: the same 750 ms timer, using power notifications from [wake.rs](src/wake.rs). Windows can reset the primary display to its native mode while resuming, which auto-stretch would otherwise read as an outside change.
+
+```text
+Timer tick
+├─ PowerWatcher reports suspend/display-off and resume/display-on since the last tick
+├─ WakeRestore remembers whether the display was Stretch before power went away
+│  └─ It stops learning from the display once a suspend is reported
+├─ After a wake, wait about 1.5 s for monitors to re-enumerate
+│  └─ Auto-stretch observation is skipped while the wake is handled
+├─ Stretch is missing → apply the configured stretch profile again, retrying each tick
+│  ├─ An owned automatic session keeps its original desktop restore target
+│  └─ The game ended during sleep (or auto-stretch is off) → do nothing; the desktop is already correct
+└─ Stop watching after about 12 s, or at once on a manual Native, Stretch, Toggle, or preset choice
+```
+
 ## Hotkeys and Windows startup
 
 ### Enable, disable, or change the global hotkey
