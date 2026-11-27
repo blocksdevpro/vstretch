@@ -131,10 +131,10 @@ impl DisplayBackend for WindowsDisplay {
         display::desktop_snapshot()
     }
     fn saved_mode(&self) -> Result<Mode> {
-        display::get_saved_resolution()
+        display::saved_mode()
     }
     fn apply(&mut self, mode: Mode, scaling: Option<u32>, save_default: bool) -> Result<()> {
-        display::apply_display_settings(mode, scaling, save_default)
+        display::apply_mode(mode, scaling, save_default)
     }
 }
 
@@ -588,16 +588,16 @@ mod tests {
     fn windows_temporary_switch_and_recovery_preserve_the_saved_default() -> Result<()> {
         let _lock = platform::display_lock()?;
         let original = display::desktop_snapshot()?;
-        let saved = display::get_saved_resolution()?;
+        let saved = display::saved_mode()?;
         struct RestoreDisplay(DesktopSnapshot);
         impl Drop for RestoreDisplay {
             fn drop(&mut self) {
-                let _ = display::apply_display_settings(self.0.mode, self.0.scaling, false);
+                let _ = display::apply_mode(self.0.mode, self.0.scaling, false);
             }
         }
         let directory = tempfile::tempdir()?;
         let _restore = RestoreDisplay(original.clone());
-        let modes = display::list_display_modes();
+        let modes = display::available_modes();
         let stretch = [
             Mode {
                 width: 1280,
@@ -616,9 +616,9 @@ mod tests {
         let config_path = directory.path().join("config.toml");
         let session = Session::new(&config_path, platform::current_process_identity()?);
         session.change(&mut WindowsDisplay, stretch, Some(1))?;
-        assert_eq!(display::get_current_resolution()?, stretch);
+        assert_eq!(display::current_mode()?, stretch);
         assert_eq!(
-            display::get_saved_resolution()?,
+            display::saved_mode()?,
             saved,
             "temporary stretch overwrote Windows' boot default"
         );
@@ -628,7 +628,7 @@ mod tests {
             Some(original.mode)
         );
         assert_eq!(display::desktop_snapshot()?, original);
-        assert_eq!(display::get_saved_resolution()?, saved);
+        assert_eq!(display::saved_mode()?, saved);
         assert!(restarted.journal.load()?.is_none());
         Ok(())
     }

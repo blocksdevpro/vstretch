@@ -84,6 +84,8 @@ Auto-stretch is enabled by default. It detects `VALORANT-Win64-Shipping.exe` and
 
 Disable auto-stretch in the menu if you prefer manual switching. Manual mode choices and display changes from other apps pause the automatic session until the game exits. If you opt in to Alt+Tab restoration, that pause lasts until the game loses focus.
 
+If your PC sleeps or a monitor turns off while stretched, Windows resets the display to native on wake. The tray notices this and applies your stretch preset again once the monitors settle, without changing which desktop mode is restored later. It does not stretch again if the game closed while you were away, and choosing Native, Stretch, Toggle, or a preset yourself cancels the restore.
+
 **Start with Windows** is enabled automatically on the first tray launch. It adds a per-user startup entry and requires no admin rights. You can turn it off in the tray menu; that choice is remembered across launches. Keep the executable in the same folder. If you move it, enable the option again from its new location.
 
 Errors appear in the tray menu and tooltip. Manual failures also open an error dialog. Failed automatic switches wait for the current session to end before trying again. Manually applied modes remain active after Exit.
