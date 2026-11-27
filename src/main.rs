@@ -6,6 +6,7 @@
 mod autostretch;
 mod config;
 mod display;
+mod game;
 mod platform;
 mod recovery;
 mod startup;
@@ -20,6 +21,7 @@ compile_error!("vstretch is Windows-only (uses Win32 display APIs)");
 use anyhow::{Context, Result};
 use clap::Parser;
 use config::Config;
+use display::DisplayState;
 
 /// Native ↔ stretch resolution switcher for FPS games (Valorant, CS2, …).
 ///
@@ -96,16 +98,11 @@ fn run(cli: Cli) -> Result<()> {
     let result = (|| {
         if cli.auto {
             let config = Config::load().context("load configuration for the display toggle")?;
-            let panel = display::get_native_resolution().ok();
-            let native = display::resolve_native(config.native.as_ref(), panel)?;
+            let display = DisplayState::read(config.native.as_ref());
             // A hotkey that just recovered stretch must not immediately apply it again.
             let mode = match recovered {
                 Some(mode) => mode,
-                None => display::toggle_stretch(
-                    &config.stretch,
-                    native,
-                    display::stretch_refresh(panel, Some(native)),
-                )?,
+                None => display.toggle(&config.stretch)?,
             };
             println!("{} [{}]", mode.label(), config.stretch.name());
             return Ok(None);

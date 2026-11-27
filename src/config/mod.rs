@@ -1,7 +1,10 @@
 //! Validates, migrates, and saves display profiles and tray preferences.
 
+pub mod hotkey;
+mod legacy;
+pub mod presets;
+
 use std::{
-    collections::BTreeMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -11,107 +14,8 @@ use anyhow::{Context, Result, bail, ensure};
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
-/// A built-in stretch preset shared by the tray and terminal pickers.
-pub struct PopularPreset {
-    pub width: u32,
-    pub height: u32,
-    pub aspect: &'static str,
-    /// An optional label shown beside the resolution in the terminal picker.
-    pub tag: Option<&'static str>,
-}
-
-impl PopularPreset {
-    /// Pads the dimensions so resolution columns line up in the picker.
-    pub fn resolution_label(&self) -> String {
-        format!("{:>4} × {:<4}", self.width, self.height)
-    }
-
-    #[cfg(test)]
-    fn name(&self) -> String {
-        format!("{}x{}", self.width, self.height)
-    }
-}
-
-/// Built-in stretch resolutions, sorted by descending height, then width.
-/// Exactly one `common` and one `popular` tag in the whole list.
-pub const POPULAR_STRETCH: &[PopularPreset] = &[
-    PopularPreset {
-        width: 1920,
-        height: 1440,
-        aspect: "4:3",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1920,
-        height: 1200,
-        aspect: "16:10",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1600,
-        height: 1200,
-        aspect: "4:3",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1728,
-        height: 1080,
-        aspect: "16:10",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1440,
-        height: 1080,
-        aspect: "4:3",
-        tag: Some("popular"),
-    },
-    PopularPreset {
-        width: 1680,
-        height: 1050,
-        aspect: "16:10",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1280,
-        height: 1024,
-        aspect: "5:4",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1280,
-        height: 960,
-        aspect: "4:3",
-        tag: Some("common"),
-    },
-    PopularPreset {
-        width: 1440,
-        height: 900,
-        aspect: "16:10",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1152,
-        height: 864,
-        aspect: "4:3",
-        tag: None,
-    },
-    PopularPreset {
-        width: 1024,
-        height: 768,
-        aspect: "4:3",
-        tag: None,
-    },
-];
-
-impl PopularPreset {
-    #[cfg(test)]
-    fn find(query: &str) -> Option<&'static PopularPreset> {
-        let q = query.trim().to_lowercase().replace('×', "x");
-        POPULAR_STRETCH
-            .iter()
-            .find(|p| p.name().eq_ignore_ascii_case(&q))
-    }
-}
+use crate::autostretch::AutoPolicy;
+use legacy::parse_config;
 
 const CONFIG_HEADER: &str = "# vstretch — omit [native] to auto-detect the panel\n\n";
 
@@ -148,161 +52,12 @@ fn validate_profile(profile: &Profile) -> Result<()> {
     Ok(())
 }
 
-/// Default global hotkey for Native ↔ Stretch toggle.
-pub const DEFAULT_HOTKEY: &str = "Ctrl+Alt+S";
-
 fn hotkey_default() -> String {
-    DEFAULT_HOTKEY.to_owned()
+    hotkey::DEFAULT_HOTKEY.to_owned()
 }
 
 fn hotkey_enabled_default() -> bool {
     true
-}
-
-/// Modifier bits matching Win32 `MOD_*` (`HOT_KEY_MODIFIERS`).
-pub const HOTKEY_MOD_ALT: u32 = 0x0001;
-pub const HOTKEY_MOD_CONTROL: u32 = 0x0002;
-pub const HOTKEY_MOD_SHIFT: u32 = 0x0004;
-pub const HOTKEY_MOD_WIN: u32 = 0x0008;
-
-/// Parses strings like `Ctrl+Alt+S` into `(modifiers, virtual-key code)`.
-///
-/// Modifiers (case-insensitive): `Ctrl`/`Control`, `Alt`, `Shift`,
-/// `Win`/`Windows`/`Super`/`Meta`. Exactly one main key is required:
-/// `A`–`Z`, `0`–`9`, `F1`–`F24`, `Space`, `Tab`, `Enter`, `Esc`/`Escape`,
-/// `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`,
-/// `Up`, `Down`, `Left`, `Right`. At least one modifier is required so a
-/// plain key is never hijacked globally. Empty strings are rejected here;
-/// callers treat empty as disabled.
-pub fn parse_hotkey(text: &str) -> Result<(u32, u32)> {
-    let trimmed = text.trim();
-    ensure!(
-        !trimmed.is_empty(),
-        "hotkey is empty (e.g. {DEFAULT_HOTKEY})"
-    );
-    let mut modifiers = 0u32;
-    let mut key: Option<u32> = None;
-    for raw in trimmed.split('+') {
-        let token = raw.trim();
-        ensure!(!token.is_empty(), "invalid hotkey '{text}': empty part");
-        let lower = token.to_ascii_lowercase();
-        let modifier = match lower.as_str() {
-            "ctrl" | "control" => Some(HOTKEY_MOD_CONTROL),
-            "alt" => Some(HOTKEY_MOD_ALT),
-            "shift" => Some(HOTKEY_MOD_SHIFT),
-            "win" | "windows" | "super" | "meta" => Some(HOTKEY_MOD_WIN),
-            _ => None,
-        };
-        if let Some(bit) = modifier {
-            modifiers |= bit;
-            continue;
-        }
-        let vk = key_to_vk(&lower)
-            .with_context(|| format!("invalid hotkey '{text}': unknown key '{token}'"))?;
-        if key.is_some() {
-            bail!("invalid hotkey '{text}': only one main key is supported");
-        }
-        key = Some(vk);
-    }
-    ensure!(
-        modifiers != 0,
-        "invalid hotkey '{text}': include at least one of Ctrl, Alt, Shift, Win"
-    );
-    let vk = key.context(format!(
-        "invalid hotkey '{text}': missing a main key (e.g. {DEFAULT_HOTKEY})"
-    ))?;
-    Ok((modifiers, vk))
-}
-
-fn key_to_vk(lower: &str) -> Result<u32> {
-    if lower.len() == 1 {
-        let c = lower.chars().next().unwrap_or_default();
-        if c.is_ascii_alphabetic() {
-            return Ok(c.to_ascii_uppercase() as u32);
-        }
-        if c.is_ascii_digit() {
-            return Ok(c as u32);
-        }
-        bail!("unsupported key '{lower}': use A-Z, 0-9, F1-F24, or a named key");
-    }
-    if let Some(number) = lower.strip_prefix('f')
-        && let Ok(n) = number.parse::<u32>()
-        && (1..=24).contains(&n)
-    {
-        return Ok(0x70 + n - 1);
-    }
-    let vk = match lower {
-        "space" => 0x20,
-        "tab" => 0x09,
-        "enter" | "return" => 0x0D,
-        "esc" | "escape" => 0x1B,
-        "backspace" => 0x08,
-        "delete" | "del" => 0x2E,
-        "insert" | "ins" => 0x2D,
-        "home" => 0x24,
-        "end" => 0x23,
-        "pageup" | "pgup" => 0x21,
-        "pagedown" | "pgdn" => 0x22,
-        "up" => 0x26,
-        "down" => 0x28,
-        "left" => 0x25,
-        "right" => 0x27,
-        _ => bail!("unsupported key '{lower}': use A-Z, 0-9, F1-F24, or a named key"),
-    };
-    Ok(vk)
-}
-
-/// Normalized `Ctrl+Alt+S` style label for menus and errors.
-pub fn canonical_hotkey(text: &str) -> Result<String> {
-    let (modifiers, vk) = parse_hotkey(text)?;
-    let mut parts = Vec::new();
-    if modifiers & HOTKEY_MOD_CONTROL != 0 {
-        parts.push("Ctrl");
-    }
-    if modifiers & HOTKEY_MOD_ALT != 0 {
-        parts.push("Alt");
-    }
-    if modifiers & HOTKEY_MOD_SHIFT != 0 {
-        parts.push("Shift");
-    }
-    if modifiers & HOTKEY_MOD_WIN != 0 {
-        parts.push("Win");
-    }
-    let key = if (0x41..=0x5A).contains(&vk) || (0x30..=0x39).contains(&vk) {
-        (vk as u8 as char).to_string()
-    } else if (0x70..=0x87).contains(&vk) {
-        format!("F{}", vk - 0x70 + 1)
-    } else {
-        match vk {
-            0x20 => "Space".into(),
-            0x09 => "Tab".into(),
-            0x0D => "Enter".into(),
-            0x1B => "Esc".into(),
-            0x08 => "Backspace".into(),
-            0x2E => "Delete".into(),
-            0x2D => "Insert".into(),
-            0x24 => "Home".into(),
-            0x23 => "End".into(),
-            0x21 => "PageUp".into(),
-            0x22 => "PageDown".into(),
-            0x26 => "Up".into(),
-            0x28 => "Down".into(),
-            0x25 => "Left".into(),
-            0x27 => "Right".into(),
-            _ => format!("VK{vk:#X}"),
-        }
-    };
-    parts.push(&key);
-    Ok(parts.join("+"))
-}
-
-fn validate_hotkey(hotkey: &str) -> Result<()> {
-    // Empty clears the hotkey; the tray treats it as disabled.
-    if hotkey.trim().is_empty() {
-        return Ok(());
-    }
-    parse_hotkey(hotkey)?;
-    Ok(())
 }
 
 /// Display profiles and preferences shared by the tray, CLI, and terminal UI.
@@ -332,17 +87,6 @@ fn auto_stretch_default() -> bool {
     true
 }
 
-/// Previous on-disk shape: a named profile map plus a string pointer.
-#[derive(Debug, Deserialize)]
-struct LegacyConfig {
-    #[serde(alias = "default_profile")]
-    default_stretch_profile: String,
-    #[serde(default, alias = "native")]
-    default_native_profile: Option<Profile>,
-    #[serde(default)]
-    profiles: BTreeMap<String, Profile>,
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -354,43 +98,6 @@ impl Default for Config {
             hotkey: hotkey_default(),
             hotkey_enabled: hotkey_enabled_default(),
         }
-    }
-}
-
-impl From<LegacyConfig> for Config {
-    fn from(legacy: LegacyConfig) -> Self {
-        let stretch = legacy
-            .profiles
-            .get(&legacy.default_stretch_profile)
-            .cloned()
-            .or_else(|| {
-                parse_res_name(&legacy.default_stretch_profile).map(|(w, h)| Profile::new(w, h))
-            })
-            .unwrap_or_else(|| Config::default().stretch);
-        Self {
-            stretch,
-            native: legacy.default_native_profile,
-            auto_stretch: auto_stretch_default(),
-            restore_on_alt_tab: false,
-            start_with_windows: None,
-            hotkey: hotkey_default(),
-            hotkey_enabled: hotkey_enabled_default(),
-        }
-    }
-}
-
-fn parse_res_name(name: &str) -> Option<(u32, u32)> {
-    let (w, h) = name.split_once('x')?;
-    Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
-}
-
-fn parse_config(text: &str) -> Result<(Config, bool)> {
-    match toml::from_str::<Config>(text) {
-        Ok(config) => Ok((config, false)),
-        Err(new_err) => match toml::from_str::<LegacyConfig>(text) {
-            Ok(legacy) => Ok((Config::from(legacy), true)),
-            Err(_) => Err(new_err.into()),
-        },
     }
 }
 
@@ -492,8 +199,16 @@ impl Config {
         if let Some(n) = &self.native {
             validate_profile(n).context("native")?;
         }
-        validate_hotkey(&self.hotkey).context("hotkey")?;
+        hotkey::validate(&self.hotkey).context("hotkey")?;
         Ok(())
+    }
+
+    /// The automatic-switching settings the auto-stretch state machine follows.
+    pub fn auto_policy(&self) -> AutoPolicy {
+        AutoPolicy {
+            enabled: self.auto_stretch,
+            restore_on_alt_tab: self.restore_on_alt_tab,
+        }
     }
 
     /// Enables or disables the global hotkey and persists the choice.
@@ -520,7 +235,8 @@ impl Config {
         self.update_and_save(|next| next.native = None)
     }
 
-    fn update_and_save(&mut self, change: impl FnOnce(&mut Self)) -> Result<()> {
+    /// Applies a change, saves it, and keeps the old settings if saving fails.
+    pub fn update_and_save(&mut self, change: impl FnOnce(&mut Self)) -> Result<()> {
         let mut next = self.clone();
         change(&mut next);
         next.save_default_path()?;
@@ -644,13 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn find_popular_preset() {
-        let p = PopularPreset::find("1440x1080").unwrap();
-        assert_eq!((p.width, p.height), (1440, 1080));
-        assert!(PopularPreset::find("9999x9999").is_none());
-    }
-
-    #[test]
     fn default_config_is_valid() {
         let c = Config::default();
         assert!(c.native.is_none());
@@ -755,71 +464,6 @@ refresh = 165
     }
 
     #[test]
-    fn legacy_profile_map_migrates() {
-        let text = r#"
-default_stretch_profile = "1440x1080"
-
-[default_native_profile]
-width = 2560
-height = 1440
-refresh = 180
-
-[profiles.1024x768]
-width = 1024
-height = 768
-
-[profiles.1440x1080]
-width = 1440
-height = 1080
-"#;
-        let (c, migrated) = parse_config(text).unwrap();
-        assert!(migrated);
-        assert_eq!(c.stretch, Profile::new(1440, 1080));
-        let n = c.native.expect("native override");
-        assert_eq!((n.width, n.height, n.refresh), (2560, 1440, Some(180)));
-    }
-
-    #[test]
-    fn old_default_profile_key_still_loads() {
-        let text = r#"
-default_profile = "1280x960"
-[profiles.1280x960]
-width = 1280
-height = 960
-refresh = 144
-"#;
-        let (c, migrated) = parse_config(text).unwrap();
-        assert!(migrated);
-        assert_eq!(
-            c.stretch,
-            Profile {
-                width: 1280,
-                height: 960,
-                refresh: Some(144),
-            }
-        );
-        assert!(c.native.is_none());
-    }
-
-    #[test]
-    fn legacy_native_table_still_loads() {
-        let text = r#"
-default_stretch_profile = "1440x1080"
-[native]
-width = 1920
-height = 1080
-refresh = 165
-[profiles.1440x1080]
-width = 1440
-height = 1080
-"#;
-        let (c, migrated) = parse_config(text).unwrap();
-        assert!(migrated);
-        let n = c.native.expect("native override");
-        assert_eq!((n.width, n.height, n.refresh), (1920, 1080, Some(165)));
-    }
-
-    #[test]
     fn native_override_rejects_zero_size() {
         let c = Config {
             native: Some(Profile {
@@ -857,52 +501,6 @@ height = 1080
             ..Config::default()
         };
         assert!(c.validate().is_err());
-    }
-
-    #[test]
-    fn hotkey_defaults_to_ctrl_alt_s_and_enabled() {
-        let c = Config::default();
-        assert_eq!(c.hotkey, "Ctrl+Alt+S");
-        assert!(c.hotkey_enabled);
-        c.validate().unwrap();
-        let (mods, vk) = parse_hotkey(&c.hotkey).unwrap();
-        assert_eq!(mods, HOTKEY_MOD_CONTROL | HOTKEY_MOD_ALT);
-        assert_eq!(vk, u32::from(b'S'));
-        assert_eq!(canonical_hotkey("ctrl+alt+s").unwrap(), "Ctrl+Alt+S");
-    }
-
-    #[test]
-    fn hotkey_parsing_accepts_common_forms() {
-        assert_eq!(
-            parse_hotkey("Ctrl+Shift+F12").unwrap(),
-            (HOTKEY_MOD_CONTROL | HOTKEY_MOD_SHIFT, 0x7B)
-        );
-        assert_eq!(canonical_hotkey("alt+ctrl+s").unwrap(), "Ctrl+Alt+S");
-        assert_eq!(canonical_hotkey("Win+Alt+Space").unwrap(), "Alt+Win+Space");
-        // Canonical order is Ctrl, Alt, Shift, Win.
-        assert_eq!(
-            canonical_hotkey("Shift+Win+Ctrl+A").unwrap(),
-            "Ctrl+Shift+Win+A"
-        );
-        assert_eq!(parse_hotkey("ctrl+alt+1").unwrap().1, u32::from(b'1'));
-    }
-
-    #[test]
-    fn hotkey_parsing_rejects_invalid_combos() {
-        for invalid in [
-            "",
-            "   ",
-            "Ctrl+Alt",
-            "S",
-            "Ctrl+Alt+S+D",
-            "Ctrl+Foo+S",
-            "Ctrl++S",
-        ] {
-            assert!(parse_hotkey(invalid).is_err(), "{invalid}");
-        }
-        // Modifier-only and key-only combos must not hijack plain keys.
-        assert!(parse_hotkey("Ctrl").is_err());
-        assert!(parse_hotkey("A").is_err());
     }
 
     #[test]
