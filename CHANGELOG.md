@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-11-27
+
 ### Fixed
 
 - Bring stretch back after the PC sleeps or its monitors turn off and on; Windows resets the display while resuming, which previously left the game on the native resolution until stretched again. An automatic session keeps its desktop restore target, and a game that ended during sleep is not stretched again
@@ -92,7 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `vstretch --auto` quiet toggle for hotkeys
 - Popular stretch presets and first-run config under `%APPDATA%\vstretch\config.toml`
 
-[Unreleased]: https://github.com/blocksdevpro/vstretch/compare/v1.3.1...develop
+[Unreleased]: https://github.com/blocksdevpro/vstretch/compare/v1.3.2...develop
+[1.3.2]: https://github.com/blocksdevpro/vstretch/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/blocksdevpro/vstretch/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/blocksdevpro/vstretch/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/blocksdevpro/vstretch/compare/v1.1.1...v1.2.0
